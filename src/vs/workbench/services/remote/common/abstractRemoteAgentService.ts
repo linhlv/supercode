@@ -145,7 +145,8 @@ export abstract class AbstractRemoteAgentService extends Disposable implements I
 
 }
 
-class RemoteAgentConnection extends Disposable implements IRemoteAgentConnection {
+/** A persistent management connection to one remote authority. */
+export class RemoteAgentConnection extends Disposable implements IRemoteAgentConnection {
 
 	private readonly _onReconnecting = this._register(new Emitter<void>());
 	public readonly onReconnecting = this._onReconnecting.event;

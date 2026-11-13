@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import { getRemoteAuthority } from './authResolver';
+import { getRemoteAuthority, RemoteSSHResolver } from './authResolver';
 import SSHConfiguration, { getSSHConfigPath } from './ssh/sshConfig';
 import { exists as fileExists } from './common/files';
 import SSHDestination from './ssh/sshDestination';
@@ -118,13 +118,15 @@ const ENTER_HOST_LABEL = 'Enter user@host…';
  * the workbench to connect to it and add folders from it to the current workspace, next to the
  * folders of any other host.
  */
-export async function addFolderToWorkspace() {
+export async function addFolderToWorkspace(resolver: RemoteSSHResolver) {
     const dest = await promptForDestination();
     if (!dest) {
         return;
     }
 
     const authority = getRemoteAuthority(dest.toEncodedString());
+    // Name the host in the workbench's progress and error messages before it is ever resolved.
+    resolver.registerLabelFormatter(authority, dest);
     await vscode.commands.executeCommand('workbench.action.addRemoteFolderToWorkspace', authority);
 }
 

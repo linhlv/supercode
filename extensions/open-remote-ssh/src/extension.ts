@@ -32,7 +32,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.commands.registerCommand('openremotessh.openEmptyWindow', () => promptOpenRemoteSSHWindow(false)));
     context.subscriptions.push(vscode.commands.registerCommand('openremotessh.openEmptyWindowInCurrentWindow', () => promptOpenRemoteSSHWindow(true)));
     context.subscriptions.push(vscode.commands.registerCommand('openremotessh.openConfigFile', () => openSSHConfigFile()));
-    context.subscriptions.push(vscode.commands.registerCommand('remote-ssh.addFolderToWorkspace', () => addFolderToWorkspace()));
+    context.subscriptions.push(vscode.commands.registerCommand('remote-ssh.addFolderToWorkspace', () => addFolderToWorkspace(remoteSSHResolver)));
     context.subscriptions.push(vscode.commands.registerCommand('openremotessh.showLog', () => logger.show()));
 }
 

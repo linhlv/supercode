@@ -37,8 +37,11 @@ Behaviour
 - Per-connection state moved from `RemoteSSHResolver` into `SSHSession`, kept in a `SessionRegistry`
   (`src/sessionRegistry.ts`) keyed by remote authority, so several hosts can be connected at once. A new resolve of
   an authority disposes only that authority's previous session; a failed resolve disposes its session.
-- The resource label formatter is registered per session for its exact authority (was `ssh-remote+*`), so each
-  host gets its own `SSH: <host>` label; it is disposed with the session.
+- The resource label formatter is registered per authority (was only `ssh-remote+*`), with the suffix
+  `SSH: [user@]host[:port]` (`hostLabelSuffix`, `src/hostLabel.ts`; user and port only when the destination names
+  them), so `alice@box` and `bob@box` read differently. It is registered at the start of `resolve()` and by
+  `remote-ssh.addFolderToWorkspace` before the host is connected, kept by the resolver (not the session) and so
+  survives re-resolves and failures; it is disposed with the resolver.
 - A failed resolve shows the output panel and the modal "Could not establish connection to …" (with "Retry" =
   reload window and "Close Remote") only for the window's own remote authority (`vscode.env.remoteAuthority`,
   `isWindowAuthority` in `src/windowAuthority.ts`). `resolveAttempt` is window-wide, so upstream showed it for the

@@ -29,6 +29,7 @@ import { buildNativeSshArgs, nativeRegistryKey } from './native/nativeSshArgs';
 import { SessionRegistry } from './sessionRegistry';
 import { selectFoldersOfAuthority } from './envScope';
 import { isWindowAuthority } from './windowAuthority';
+import { hostLabelSuffix } from './hostLabel';
 
 const PASSWORD_RETRY_COUNT = 3;
 const PASSPHRASE_RETRY_COUNT = 3;
@@ -225,7 +226,6 @@ export class SSHSession implements vscode.Disposable {
     socksTunnel: SSHTunnelConfig | undefined;
     tunnels: TunnelInfo[] = [];
 
-    labelFormatterDisposable: vscode.Disposable | undefined;
     nativeSshKeepalive: vscode.Disposable | undefined;
     terminalEnvDisposable: vscode.Disposable | undefined;
 
@@ -245,7 +245,6 @@ export class SSHSession implements vscode.Disposable {
             this.sshConnection?.close();
         }
         this.proxyCommandProcess?.kill();
-        this.labelFormatterDisposable?.dispose();
 
         this.nativeManager?.dispose();
         this.nativeManager = undefined;
@@ -255,6 +254,8 @@ export class SSHSession implements vscode.Disposable {
 export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode.Disposable {
 
     private readonly sessions = new SessionRegistry<SSHSession>();
+    /** Label formatters by authority. They outlive sessions, which end on every re-resolve and failure. */
+    private readonly labelFormatters = new SessionRegistry<vscode.Disposable>();
 
     constructor(
         readonly context: vscode.ExtensionContext,
@@ -271,6 +272,7 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
         this.logger.info(`Resolving ssh remote authority '${authority}' (attempt #${context.resolveAttempt})`);
 
         const destination = SSHDestination.parseEncoded(dest);
+        this.registerLabelFormatter(authority, destination);
 
         // A new attempt for an authority replaces (and disposes) that authority's previous session only.
         this.sessions.delete(authority);
@@ -408,18 +410,6 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
 
                 vscode.commands.executeCommand('setContext', 'forwardedPortsViewEnabled', true);
 
-                session.labelFormatterDisposable?.dispose();
-                session.labelFormatterDisposable = vscode.workspace.registerResourceLabelFormatter({
-                    scheme: 'vscode-remote',
-                    authority,
-                    formatting: {
-                        label: '${path}',
-                        separator: '/',
-                        tildify: true,
-                        workspaceSuffix: `SSH: ${destination.hostname}` +
-                            (destination.port && destination.port !== 22 ? `:${destination.port}` : ''),
-                    },
-                });
 
                 const resolvedResult: vscode.ResolverResult = new vscode.ResolvedAuthority(
                     '127.0.0.1',
@@ -633,18 +623,6 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
 
         // Enable ports view
         vscode.commands.executeCommand('setContext', 'forwardedPortsViewEnabled', true);
-
-        session.labelFormatterDisposable?.dispose();
-        session.labelFormatterDisposable = vscode.workspace.registerResourceLabelFormatter({
-            scheme: 'vscode-remote',
-            authority,
-            formatting: {
-                label: '${path}',
-                separator: '/',
-                tildify: true,
-                workspaceSuffix: `SSH: ${destination.hostname}` + (destination.port && destination.port !== 22 ? `:${destination.port}` : '')
-            }
-        });
 
         const resolvedResult: vscode.ResolverResult = new vscode.ResolvedAuthority('127.0.0.1', tunnelConfig.localPort, installResult.connectionToken);
         resolvedResult.extensionHostEnv = envVariables;
@@ -1134,7 +1112,26 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
         };
     }
 
+    /**
+     * Registers the resource label formatter of `authority` once, for as long as the resolver lives,
+     * so that a host that is connecting, failed or disconnected is still named `SSH: [user@]host[:port]`
+     * and not just "SSH".
+     */
+    registerLabelFormatter(authority: string, destination: SSHDestination): void {
+        this.labelFormatters.getOrCreate(authority, () => vscode.workspace.registerResourceLabelFormatter({
+            scheme: 'vscode-remote',
+            authority,
+            formatting: {
+                label: '${path}',
+                separator: '/',
+                tildify: true,
+                workspaceSuffix: hostLabelSuffix(destination),
+            },
+        }));
+    }
+
     dispose() {
         this.sessions.dispose();
+        this.labelFormatters.dispose();
     }
 }

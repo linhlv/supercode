@@ -28,6 +28,7 @@ import { NativeSshConnectionOptions, NativeSshManager, NativeSshRegistry } from 
 import { buildNativeSshArgs, nativeRegistryKey } from './native/nativeSshArgs';
 import { SessionRegistry } from './sessionRegistry';
 import { selectFoldersOfAuthority } from './envScope';
+import { isWindowAuthority } from './windowAuthority';
 
 const PASSWORD_RETRY_COUNT = 3;
 const PASSPHRASE_RETRY_COUNT = 3;
@@ -288,13 +289,15 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
                 this.logger.error(`Error resolving authority`, e);
                 this.sessions.delete(authority);
 
-                return await this.throwOrCommand(context, destination, e);
+                return await this.throwOrCommand(context, authority, destination, e);
             }
         });
     }
 
-    private async throwOrCommand(context: vscode.RemoteAuthorityResolverContext, destination: SSHDestination, error: unknown): Promise<never> {
-        if (context.resolveAttempt === 1) {
+    private async throwOrCommand(context: vscode.RemoteAuthorityResolverContext, authority: string, destination: SSHDestination, error: unknown): Promise<never> {
+        // `resolveAttempt` counts resolves of every authority of the window, so it is 1 for the first
+        // additional host of a local window as well. Its failure must never reload or close the window.
+        if (context.resolveAttempt === 1 && isWindowAuthority(vscode.env.remoteAuthority, authority)) {
             this.logger.show();
 
             const closeRemote = 'Close Remote';

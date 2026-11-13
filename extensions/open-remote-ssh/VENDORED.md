@@ -39,6 +39,11 @@ Behaviour
   an authority disposes only that authority's previous session; a failed resolve disposes its session.
 - The resource label formatter is registered per session for its exact authority (was `ssh-remote+*`), so each
   host gets its own `SSH: <host>` label; it is disposed with the session.
+- A failed resolve shows the output panel and the modal "Could not establish connection to …" (with "Retry" =
+  reload window and "Close Remote") only for the window's own remote authority (`vscode.env.remoteAuthority`,
+  `isWindowAuthority` in `src/windowAuthority.ts`). `resolveAttempt` is window-wide, so upstream showed it for the
+  first additional host of a local window, whose "Retry"/"Close Remote" act on the whole local window. Additional
+  hosts now just throw the resolver error.
 - New command `remote-ssh.addFolderToWorkspace` ("Add SSH Folder to Workspace...", command palette and
   `view/title` of the Explorer) that runs the core `workbench.action.addRemoteFolderToWorkspace`.
 - Server packages (fork-specific): the native backend no longer downloads the server for Linux remotes. Before the

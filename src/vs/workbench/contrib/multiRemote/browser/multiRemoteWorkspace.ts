@@ -12,6 +12,7 @@ import { localize, localize2 } from '../../../../nls.js';
 import { Action2, MenuId } from '../../../../platform/actions/common/actions.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { ILabelService } from '../../../../platform/label/common/label.js';
 import { listErrorForeground } from '../../../../platform/theme/common/colorRegistry.js';
 import { IWorkspaceContextService, IWorkspaceFolder } from '../../../../platform/workspace/common/workspace.js';
 import { ResourceContextKey } from '../../../common/contextkeys.js';
@@ -42,6 +43,7 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 		@IExplorerService private readonly explorerService: IExplorerService,
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IEditorService private readonly editorService: IEditorService,
+		@ILabelService private readonly labelService: ILabelService,
 		@IDecorationsService decorationsService: IDecorationsService
 	) {
 		super();
@@ -108,21 +110,22 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 					return undefined;
 				}
 				const key = resource.authority.toLowerCase();
+				const host = this.labelService.getHostLabel(Schemas.vscodeRemote, resource.authority) || resource.authority;
 				const error = this.errors.get(key) ?? this.multiRemoteService.getHosts().find(h => h.authority.toLowerCase() === key)?.error;
 				const state = this.multiRemoteService.getState(resource.authority);
 				switch (state) {
 					case RemoteHostState.Connecting:
 					case RemoteHostState.Reconnecting:
-						return { letter: '…', tooltip: localize('multiRemote.connecting', "Connecting to {0}…", resource.authority), weight: 10 };
+						return { letter: '…', tooltip: localize('multiRemote.connecting', "Connecting to {0}…", host), weight: 10 };
 					case RemoteHostState.Failed:
 						return {
 							letter: '!',
 							color: listErrorForeground,
-							tooltip: localize('multiRemote.failed', "{0}: {1}", resource.authority, error ?? localize('multiRemote.connectionLost', "connection lost")),
+							tooltip: localize('multiRemote.failed', "{0}: {1}", host, error ?? localize('multiRemote.connectionLost', "connection lost")),
 							weight: 10
 						};
 					case RemoteHostState.Disconnected:
-						return { letter: '–', tooltip: localize('multiRemote.disconnected', "{0} is disconnected", resource.authority), weight: 10 };
+						return { letter: '–', tooltip: localize('multiRemote.disconnected', "{0} is disconnected", host), weight: 10 };
 					default:
 						return undefined;
 				}

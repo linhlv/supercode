@@ -91,7 +91,11 @@ export class RemoteFileSystemRouter extends Disposable implements
 	//#region Routing
 
 	private unavailable(authority: string): Error {
-		return createFileSystemProviderError(localize('hostNotConnected', "{0} is not connected yet.", this.getHostLabel(authority)), FileSystemProviderErrorCode.Unavailable);
+		const state = this.multiRemoteService.getState(authority);
+		const message = state === RemoteHostState.Connecting || state === RemoteHostState.Reconnecting
+			? localize('hostNotConnected', "{0} is not connected yet.", this.getHostLabel(authority))
+			: localize('hostUnavailable', "{0} is unavailable.", this.getHostLabel(authority));
+		return createFileSystemProviderError(message, FileSystemProviderErrorCode.Unavailable);
 	}
 
 	/** Starts connecting a host that was never touched before. The authority is passed on exactly as written. */

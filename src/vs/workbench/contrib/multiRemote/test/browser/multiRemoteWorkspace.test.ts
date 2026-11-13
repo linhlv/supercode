@@ -9,6 +9,7 @@ import { IDisposable, toDisposable } from '../../../../../base/common/lifecycle.
 import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
+import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { IWorkspaceContextService, IWorkspaceFolder, IWorkspaceFoldersChangeEvent } from '../../../../../platform/workspace/common/workspace.js';
 import { IWorkbenchConfigurationService } from '../../../../services/configuration/common/configuration.js';
 import { IDecorationData, IDecorationsProvider, IDecorationsService } from '../../../../services/decorations/common/decorations.js';
@@ -57,7 +58,8 @@ suite('MultiRemoteWorkspace', () => {
 		const decorationsService = {
 			registerDecorationsProvider: (p: IDecorationsProvider): IDisposable => { provider = p; return toDisposable(() => { provider = undefined; }); }
 		} as Partial<IDecorationsService> as IDecorationsService;
-		return store.add(new MultiRemoteWorkspaceContribution(multiRemoteService, contextService, configurationService, explorerService, editorGroupsService, editorService, decorationsService));
+		const labelService = { getHostLabel: (_scheme: string, authority: string) => `SSH: ${authority.substring('ssh-remote+'.length)}@box` } as Partial<ILabelService> as ILabelService;
+		return store.add(new MultiRemoteWorkspaceContribution(multiRemoteService, contextService, configurationService, explorerService, editorGroupsService, editorService, labelService, decorationsService));
 	}
 
 	setup(() => {
@@ -113,6 +115,6 @@ suite('MultiRemoteWorkspace', () => {
 		const decoration = await provider!.provideDecorations(folders[0].uri, undefined!) as IDecorationData;
 		const other = await provider!.provideDecorations(folders[1].uri, undefined!);
 		const child = await provider!.provideDecorations(URI.joinPath(folders[0].uri, 'sub'), undefined!);
-		assert.deepStrictEqual({ letter: decoration.letter, tooltip: decoration.tooltip?.includes('Permission denied'), other, child }, { letter: '!', tooltip: true, other: undefined, child: undefined });
+		assert.deepStrictEqual({ letter: decoration.letter, tooltip: decoration.tooltip, other, child }, { letter: '!', tooltip: 'SSH: a@box: Permission denied', other: undefined, child: undefined });
 	});
 });

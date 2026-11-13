@@ -32,8 +32,9 @@ suite('MultiRemoteActions', () => {
 	let connectResult: Promise<IRemoteHostConnection>;
 	let dialogCalls: IOpenDialogOptions[];
 	let dialogResult: URI[] | undefined;
-	let added: URI[][];
+	let added: { uri: URI; name?: string }[][];
 	let errors: string[];
+	let hostLabel: string;
 
 	function accessor(): ServicesAccessor {
 		const services = new Map<unknown, unknown>([
@@ -42,9 +43,9 @@ suite('MultiRemoteActions', () => {
 			} as Partial<IMultiRemoteService>],
 			[IProgressService, { withProgress: (_options: unknown, task: () => Promise<unknown>) => task() } as Partial<IProgressService>],
 			[IFileDialogService, { showOpenDialog: async (options: IOpenDialogOptions) => { dialogCalls.push(options); return dialogResult; } } as Partial<IFileDialogService>],
-			[IWorkspaceEditingService, { addFolders: async (folders: { uri: URI }[]) => { added.push(folders.map(f => f.uri)); } } as Partial<IWorkspaceEditingService>],
+			[IWorkspaceEditingService, { addFolders: async (folders: { uri: URI; name?: string }[]) => { added.push(folders); } } as Partial<IWorkspaceEditingService>],
 			[INotificationService, { error: (message: string) => { errors.push(message); } } as Partial<INotificationService>],
-			[ILabelService, { getHostLabel: () => '' } as Partial<ILabelService>]
+			[ILabelService, { getHostLabel: () => hostLabel } as Partial<ILabelService>]
 		]);
 		return { get: (id: unknown) => services.get(id) } as unknown as ServicesAccessor;
 	}
@@ -63,6 +64,7 @@ suite('MultiRemoteActions', () => {
 		dialogResult = undefined;
 		added = [];
 		errors = [];
+		hostLabel = 'SSH: alice@box';
 	});
 
 	test('adds picked folders from the host\'s home', async () => {
@@ -73,11 +75,11 @@ suite('MultiRemoteActions', () => {
 		assert.deepStrictEqual({
 			homeOk: isEqual(dialogCalls[0].defaultUri!, URI.from({ scheme: 'vscode-remote', authority: AUTHORITY, path: '/home/a' })),
 			options: [dialogCalls[0].canSelectFolders, dialogCalls[0].canSelectFiles, dialogCalls[0].canSelectMany, dialogCalls[0].availableFileSystems],
-			added: added.map(uris => uris.map(u => u.toString()))
+			added: added.map(folders => folders.map(f => ({ uri: f.uri.toString(), name: f.name })))
 		}, {
 			homeOk: true,
 			options: [true, false, true, [Schemas.vscodeRemote]],
-			added: [picked.map(u => u.toString())]
+			added: [[{ uri: picked[0].toString(), name: 'x [SSH: alice@box]' }, { uri: picked[1].toString(), name: 'y [SSH: alice@box]' }]]
 		});
 	});
 
@@ -89,6 +91,7 @@ suite('MultiRemoteActions', () => {
 
 	test('connection failure reports and adds nothing', async () => {
 		connectResult = Promise.reject(new Error('Host key verification failed'));
+		hostLabel = '';
 		await new AddRemoteFolderToWorkspaceAction().run(accessor(), AUTHORITY);
 		assert.strictEqual(errors.length, 1);
 		assert.ok(errors[0].includes('Host key verification failed'));

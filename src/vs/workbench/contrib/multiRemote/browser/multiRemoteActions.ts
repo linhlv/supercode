@@ -5,6 +5,7 @@
 
 import { getErrorMessage } from '../../../../base/common/errors.js';
 import { Schemas } from '../../../../base/common/network.js';
+import { basename } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { Action2 } from '../../../../platform/actions/common/actions.js';
@@ -66,7 +67,8 @@ export class AddRemoteFolderToWorkspaceAction extends Action2 {
 			availableFileSystems: [Schemas.vscodeRemote]
 		});
 		if (picked && picked.length > 0) {
-			await workspaceEditingService.addFolders(picked.map(uri => ({ uri })));
+			// Name each root after its host, so that the same path on two hosts can be told apart
+			await workspaceEditingService.addFolders(picked.map(uri => ({ uri, name: localize('multiRemote.rootName', "{0} [{1}]", basename(uri), host) })));
 		}
 	}
 }

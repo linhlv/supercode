@@ -172,6 +172,21 @@ suite('RemoteFileSystemRouter', () => {
 		assert.deepStrictEqual(service.connectCalls, []);
 	});
 
+	test('a failed or disconnected host is unavailable, a connecting one is not connected yet', async () => {
+		const C = 'ssh-remote+c';
+		service.states.set(A, RemoteHostState.Failed);
+		service.states.set(B, RemoteHostState.Disconnected);
+		service.states.set(C, RemoteHostState.Connecting);
+		const router = store.add(new RemoteFileSystemRouter(service, undefined, authority => `SSH: ${authority.substring('ssh-remote+'.length)}@box`));
+		const messageOf = (authority: string) => router.stat(uri(authority)).then(() => undefined, (e: Error) => e.message);
+
+		assert.deepStrictEqual([await messageOf(A), await messageOf(B), await messageOf(C)], [
+			'SSH: a@box is unavailable.',
+			'SSH: b@box is unavailable.',
+			'SSH: c@box is not connected yet.'
+		]);
+	});
+
 	test('a call cut off by the host failing fails with Unavailable naming the host', async () => {
 		service.setConnected(A);
 		service.setConnected(B);

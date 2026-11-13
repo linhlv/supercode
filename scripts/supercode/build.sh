@@ -8,8 +8,12 @@
 # The server tarballs are what the Remote SSH extension uploads to remote hosts, so they are
 # written to ~/.supercode/server-packages/<commit>/vscode-reh-<target>.tar.gz.
 #
-# Usage: scripts/supercode/build.sh [--dry-run]
-#   --dry-run   print the commands and output paths without running anything
+# Usage: scripts/supercode/build.sh [--dry-run] [--skip-app] [--target <name>]...
+#   --dry-run          print the commands and output paths without running anything
+#   --skip-app         don't build the macOS app (reuse the one already built)
+#   --target <name>    build only this server: linux-x64, linux-arm64, linux-alpine or alpine-arm64;
+#                      repeat it for several. Without it, all four are built.
+# Example, the linux-x64 server only, reusing the app: scripts/supercode/build.sh --skip-app --target linux-x64
 #
 # The app is built on this Mac. Every server is built in Linux containers (Docker must be
 # running) of the target's architecture, so that its native modules (node-pty, @parcel/watcher,
@@ -31,18 +35,32 @@
 set -euo pipefail
 
 DRY_RUN=0
-for arg in "$@"; do
-  case "$arg" in
+SKIP_APP=0
+SELECTED_TARGETS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --dry-run) DRY_RUN=1 ;;
+    --skip-app) SKIP_APP=1 ;;
+    --target)
+      case "${2:-}" in
+        linux-x64 | linux-arm64 | linux-alpine | alpine-arm64) SELECTED_TARGETS+=("vscode-reh-$2") ;;
+        *)
+          echo "Unknown --target '${2:-}': use linux-x64, linux-arm64, linux-alpine or alpine-arm64." >&2
+          exit 2
+          ;;
+      esac
+      shift
+      ;;
     -h | --help)
       sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//' | sed '1d'
       exit 0
       ;;
     *)
-      echo "Unknown argument: $arg" >&2
+      echo "Unknown argument: $1" >&2
       exit 2
       ;;
   esac
+  shift
 done
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -183,12 +201,19 @@ fi
 cd "$ROOT"
 echo "Commit: $COMMIT"
 echo "Server packages: $PACKAGES_DIR"
+if [[ ${#SELECTED_TARGETS[@]} -gt 0 ]]; then
+  echo "Servers: ${SELECTED_TARGETS[*]}"
+fi
 [[ "$DRY_RUN" -eq 1 ]] && echo "(dry run: nothing is executed)"
 
 run mkdir -p "$PACKAGES_DIR" "$WORK_DIR"
 
-run pnpm run gulp "$APP_TARGET"
-echo "  app -> $APP_OUTPUT/"
+if [[ "$SKIP_APP" -eq 1 ]]; then
+  echo "  app: skipped (--skip-app), reusing $APP_OUTPUT/"
+else
+  run pnpm run gulp "$APP_TARGET"
+  echo "  app -> $APP_OUTPUT/"
+fi
 
 echo "+ git archive --format=tar HEAD > $WORK_DIR/source.tar"
 if [[ "$DRY_RUN" -eq 0 ]]; then
@@ -197,6 +222,9 @@ fi
 
 for entry in "${SERVER_TARGETS[@]}"; do
   IFS='|' read -r target platform libc pattern <<< "$entry"
+  if [[ ${#SELECTED_TARGETS[@]} -gt 0 && " ${SELECTED_TARGETS[*]} " != *" $target "* ]]; then
+    continue
+  fi
   arch="${platform#linux/}"
 
   build_image "deps-$libc" "$platform"

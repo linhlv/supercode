@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
@@ -11,6 +12,7 @@ import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase 
 import { RemoteFileSystemRouter } from '../../../services/remote/browser/remoteFileSystemRouter.js';
 import { IMultiRemoteService } from '../../../services/remote/common/multiRemoteService.js';
 import { MultiRemoteTerminalContribution } from './multiRemoteTerminal.js';
+import { MultiRemoteWorkspaceContribution, ReconnectHostAction } from './multiRemoteWorkspace.js';
 
 /** Registers the host-routing `vscode-remote` file system provider in local windows. */
 export class MultiRemoteFileSystemContribution extends Disposable implements IWorkbenchContribution {
@@ -33,3 +35,5 @@ export class MultiRemoteFileSystemContribution extends Disposable implements IWo
 
 registerWorkbenchContribution2(MultiRemoteFileSystemContribution.ID, MultiRemoteFileSystemContribution, WorkbenchPhase.BlockStartup);
 registerWorkbenchContribution2(MultiRemoteTerminalContribution.ID, MultiRemoteTerminalContribution, WorkbenchPhase.AfterRestored);
+registerWorkbenchContribution2(MultiRemoteWorkspaceContribution.ID, MultiRemoteWorkspaceContribution, WorkbenchPhase.BlockStartup);
+registerAction2(ReconnectHostAction);

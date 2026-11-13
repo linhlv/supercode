@@ -72,6 +72,8 @@ import { IEnvironmentVariableInfo } from '../common/environmentVariable.js';
 import { ITerminalProcessManager, ITerminalProfileResolverService, ProcessState, TERMINAL_VIEW_ID, TerminalCommandId } from '../common/terminal.js';
 import { TERMINAL_BACKGROUND_COLOR } from '../common/terminalColorRegistry.js';
 import { TerminalContextKeys } from '../common/terminalContextKey.js';
+import { ILabelService } from '../../../../platform/label/common/label.js';
+import { getSecondaryHostLabel } from '../../../../platform/terminal/common/terminalEnvironment.js';
 import { getUriLabelForShell, getShellIntegrationTimeout, getWorkspaceForTerminal, preparePathForShell } from '../common/terminalEnvironment.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
@@ -407,6 +409,7 @@ export class TerminalInstance extends Disposable implements ITerminalInstance {
 		@IProductService _productService: IProductService,
 		@IQuickInputService private readonly _quickInputService: IQuickInputService,
 		@IWorkbenchEnvironmentService private readonly _workbenchEnvironmentService: IWorkbenchEnvironmentService,
+		@ILabelService private readonly _labelService: ILabelService,
 		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
 		@IEditorService private readonly _editorService: IEditorService,
 		@IWorkspaceTrustRequestService private readonly _workspaceTrustRequestService: IWorkspaceTrustRequestService,
@@ -549,6 +552,12 @@ export class TerminalInstance extends Disposable implements ITerminalInstance {
 		this.statusList = this._register(this._scopedInstantiationService.createInstance(TerminalStatusList));
 		this._initDimensions();
 		this._processManager = this._createProcessManager();
+		if (!this._shellLaunchConfig.hostLabel) {
+			const hostLabel = getSecondaryHostLabel(this._processManager.remoteAuthority, this._workbenchEnvironmentService.remoteAuthority, authority => this._labelService.getHostLabel(Schemas.vscodeRemote, authority));
+			if (hostLabel) {
+				this._shellLaunchConfig.hostLabel = hostLabel;
+			}
+		}
 
 		this._containerReadyBarrier = new AutoOpenBarrier(Constants.WaitForContainerThreshold);
 		this._attachBarrier = new AutoOpenBarrier(1000);

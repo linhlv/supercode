@@ -30,6 +30,7 @@ import { IConfigurationResolverService } from '../../../services/configurationRe
 import { IHistoryService } from '../../../services/history/common/history.js';
 import { getWorkspaceForTerminal } from '../common/terminalEnvironment.js';
 import { IRemoteAgentService } from '../../../services/remote/common/remoteAgentService.js';
+import { IMultiRemoteService } from '../../../services/remote/common/multiRemoteService.js';
 import { IStatusbarService } from '../../../services/statusbar/browser/statusbar.js';
 
 export class RemoteTerminalBackendContribution implements IWorkbenchContribution {
@@ -50,7 +51,8 @@ export class RemoteTerminalBackendContribution implements IWorkbenchContribution
 	}
 }
 
-class RemoteTerminalBackend extends BaseTerminalBackend implements ITerminalBackend {
+/** A terminal backend talking to the terminal channel of one remote host. */
+export class RemoteTerminalBackend extends BaseTerminalBackend implements ITerminalBackend {
 	private readonly _ptys: Map<number, RemotePty> = new Map();
 
 	private readonly _whenConnected = new DeferredPromise<void>();
@@ -65,7 +67,7 @@ class RemoteTerminalBackend extends BaseTerminalBackend implements ITerminalBack
 	constructor(
 		readonly remoteAuthority: string | undefined,
 		private readonly _remoteTerminalChannel: RemoteTerminalChannelClient,
-		@IRemoteAgentService private readonly _remoteAgentService: IRemoteAgentService,
+		@IMultiRemoteService private readonly _multiRemoteService: IMultiRemoteService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@ITerminalLogService logService: ITerminalLogService,
 		@ICommandService private readonly _commandService: ICommandService,
@@ -166,7 +168,7 @@ class RemoteTerminalBackend extends BaseTerminalBackend implements ITerminalBack
 		}
 
 		// Fetch the environment to check shell permissions
-		const remoteEnv = await this._remoteAgentService.getEnvironment();
+		const remoteEnv = await this._multiRemoteService.getEnvironment(this.remoteAuthority);
 		if (!remoteEnv) {
 			// Extension host processes are only allowed in remote extension hosts currently
 			throw new Error('Could not fetch remote environment');
@@ -289,11 +291,10 @@ class RemoteTerminalBackend extends BaseTerminalBackend implements ITerminalBack
 	}
 
 	async getShellEnvironment(): Promise<IProcessEnvironment | undefined> {
-		const connection = this._remoteAgentService.getConnection();
-		if (!connection) {
+		if (!this.remoteAuthority) {
 			return undefined;
 		}
-		const resolverResult = await this._remoteAuthorityResolverService.resolveAuthority(connection.remoteAuthority);
+		const resolverResult = await this._remoteAuthorityResolverService.resolveAuthority(this.remoteAuthority);
 		const envResult: IProcessEnvironment = {};
 		if (resolverResult.options?.extensionHostEnv) {
 			for (const [key, value] of Object.entries(resolverResult.options.extensionHostEnv)) {
@@ -306,7 +307,7 @@ class RemoteTerminalBackend extends BaseTerminalBackend implements ITerminalBack
 	}
 
 	async getWslPath(original: string, direction: 'unix-to-win' | 'win-to-unix'): Promise<string> {
-		const env = await this._remoteAgentService.getEnvironment();
+		const env = await this._multiRemoteService.getEnvironment(this.remoteAuthority);
 		if (env?.os !== OperatingSystem.Windows) {
 			return original;
 		}

@@ -20,6 +20,7 @@ import { ITerminalChildProcess, TitleEventSource, type IProcessReadyEvent, type 
 import { ITerminalInstanceService, ITerminalService } from '../../browser/terminal.js';
 import { TerminalProcessManager } from '../../browser/terminalProcessManager.js';
 import { IEnvironmentVariableService } from '../../common/environmentVariable.js';
+import { IMultiRemoteService } from '../../../../services/remote/common/multiRemoteService.js';
 import { IRemoteAgentService } from '../../../../services/remote/common/remoteAgentService.js';
 import { IHostService } from '../../../../services/host/browser/host.js';
 import { IRemoteAgentEnvironment } from '../../../../../platform/remote/common/remoteAgentEnvironment.js';
@@ -270,6 +271,21 @@ suite('Workbench - TerminalProcessManager', () => {
 			});
 		});
 	}
+
+	test('uses the secondary host\'s OS and home', async () => {
+		instantiationService.stub(IMultiRemoteService, {
+			isSecondary: () => true,
+			getEnvironment: async (authority: string | undefined) => authority === 'ssh-remote+b'
+				? upcastPartial<IRemoteAgentEnvironment>({ os: OperatingSystem.Linux, userHome: URI.file('/home/b') })
+				: null
+		} as Partial<IMultiRemoteService> as IMultiRemoteService);
+		const secondary = store.add(instantiationService.createInstance(TerminalProcessManager, 4,
+			URI.from({ scheme: Schemas.vscodeRemote, authority: 'ssh-remote+b', path: '/srv' }), undefined, undefined));
+		await secondary.createProcess({}, 80, 24, false);
+		deepStrictEqual({ authority: secondary.remoteAuthority, os: secondary.os, userHome: secondary.userHome }, {
+			authority: 'ssh-remote+b', os: OperatingSystem.Linux, userHome: '/home/b'
+		});
+	});
 
 	test('does not accumulate environment variable collection listeners when relaunching', async () => {
 		const changeCollectionsEmitter = (environmentVariableService as unknown as { _onDidChangeCollections: Emitter<unknown> })._onDidChangeCollections;

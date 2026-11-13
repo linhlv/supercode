@@ -179,6 +179,7 @@ import { ICopilotHomeService } from '../../../platform/environment/common/copilo
 import { QuickInputService } from '../../services/quickinput/browser/quickInputService.js';
 import { NullOpenerService } from '../../../platform/opener/test/common/nullOpenerService.js';
 import { IExtensionHostExitInfo, IRemoteAgentConnection, IRemoteAgentService } from '../../services/remote/common/remoteAgentService.js';
+import { IMultiRemoteService, IRemoteHostConnection, IRemoteHostStatus, RemoteHostState } from '../../services/remote/common/multiRemoteService.js';
 import { BrowserTextFileService } from '../../services/textfile/browser/browserTextFileService.js';
 import { EncodingOracle, IEncodingOverride } from '../../services/textfile/browser/textFileService.js';
 import { UTF16be, UTF16le, UTF8_with_bom } from '../../services/textfile/common/encoding.js';
@@ -311,6 +312,7 @@ export function workbenchInstantiationService(
 	instantiationService.stub(IUntitledTextEditorService, disposables.add(instantiationService.createInstance(UntitledTextEditorService)));
 	instantiationService.stub(IStorageService, disposables.add(new TestStorageService()));
 	instantiationService.stub(IRemoteAgentService, new TestRemoteAgentService());
+	instantiationService.stub(IMultiRemoteService, new TestMultiRemoteService(() => instantiationService.get(IRemoteAgentService)));
 	instantiationService.stub(ILanguageDetectionService, new TestLanguageDetectionService());
 	const pathService = overrides?.pathService ? overrides.pathService(instantiationService) : new TestPathService();
 	instantiationService.stub(IPathService, pathService);
@@ -2034,6 +2036,25 @@ class TestLanguageDetectionService implements ILanguageDetectionService {
 
 	isEnabledForLanguage(languageId: string): boolean { return false; }
 	async detectLanguage(resource: URI, supportedLangs?: string[] | undefined): Promise<string | undefined> { return undefined; }
+}
+
+/** A disabled {@link IMultiRemoteService} that resolves the primary environment from the remote agent service. */
+export class TestMultiRemoteService implements IMultiRemoteService {
+
+	declare readonly _serviceBrand: undefined;
+
+	readonly isEnabled = false;
+	readonly onDidChangeHostState = Event.None;
+
+	constructor(private readonly _getRemoteAgentService: () => IRemoteAgentService) { }
+
+	getHosts(): readonly IRemoteHostStatus[] { return []; }
+	getState(authority: string): RemoteHostState | undefined { return undefined; }
+	getConnected(authority: string): IRemoteHostConnection | undefined { return undefined; }
+	async connect(authority: string): Promise<IRemoteHostConnection> { throw new Error('Not supported'); }
+	async disconnect(authority: string): Promise<void> { }
+	isSecondary(authority: string | undefined): boolean { return false; }
+	getEnvironment(authority: string | undefined): Promise<IRemoteAgentEnvironment | null> { return this._getRemoteAgentService().getEnvironment(); }
 }
 
 export class TestRemoteAgentService implements IRemoteAgentService {

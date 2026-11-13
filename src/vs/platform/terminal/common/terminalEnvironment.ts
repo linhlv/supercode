@@ -140,3 +140,14 @@ export function sanitizeCwd(cwd: string): string {
 export function shouldUseEnvironmentVariableCollection(slc: IShellLaunchConfig): boolean {
 	return !slc.strictEnv;
 }
+
+/**
+ * Gets the label of the remote host a terminal runs on, or `undefined` for local and primary-remote
+ * terminals, whose host is already implied by the window.
+ */
+export function getSecondaryHostLabel(remoteAuthority: string | undefined, primaryAuthority: string | undefined, getHostLabel: (authority: string) => string): string | undefined {
+	if (!remoteAuthority || remoteAuthority.toLowerCase() === primaryAuthority?.toLowerCase()) {
+		return undefined;
+	}
+	return getHostLabel(remoteAuthority);
+}

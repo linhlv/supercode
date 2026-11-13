@@ -17,11 +17,12 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
 import { promiseWithResolvers } from '../../../../base/common/async.js';
 import { hasKey } from '../../../../base/common/types.js';
+import { IMultiRemoteService } from '../../../services/remote/common/multiRemoteService.js';
 
 export class TerminalInstanceService extends Disposable implements ITerminalInstanceService {
 	declare _serviceBrand: undefined;
 	private _terminalShellTypeContextKey: IContextKey<string>;
-	private _backendRegistration = new Map<string | undefined, { promise: Promise<void>; resolve: () => void }>();
+	private _backendRegistration = new Map<string, { promise: Promise<void>; resolve: () => void }>();
 
 	private readonly _onDidCreateInstance = this._register(new Emitter<ITerminalInstance>());
 	get onDidCreateInstance(): Event<ITerminalInstance> { return this._onDidCreateInstance.event; }
@@ -33,14 +34,24 @@ export class TerminalInstanceService extends Disposable implements ITerminalInst
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@IContextKeyService private readonly _contextKeyService: IContextKeyService,
 		@IWorkbenchEnvironmentService environmentService: IWorkbenchEnvironmentService,
+		@IMultiRemoteService private readonly _multiRemoteService: IMultiRemoteService,
 	) {
 		super();
 		this._terminalShellTypeContextKey = TerminalContextKeys.shellType.bindTo(this._contextKeyService);
 
 		for (const remoteAuthority of [undefined, environmentService.remoteAuthority]) {
-			const { promise, resolve } = promiseWithResolvers<void>();
-			this._backendRegistration.set(remoteAuthority, { promise, resolve });
+			this._getOrCreateRegistration(remoteAuthority);
 		}
+	}
+
+	private _getOrCreateRegistration(remoteAuthority: string | undefined) {
+		const key = remoteAuthority?.toLowerCase() ?? '';
+		let registration = this._backendRegistration.get(key);
+		if (!registration) {
+			registration = promiseWithResolvers<void>();
+			this._backendRegistration.set(key, registration);
+		}
+		return registration;
 	}
 
 	createInstance(profile: ITerminalProfile, target: TerminalLocation): ITerminalInstance;
@@ -85,9 +96,14 @@ export class TerminalInstanceService extends Disposable implements ITerminalInst
 
 	async getBackend(remoteAuthority?: string): Promise<ITerminalBackend | undefined> {
 		let backend = Registry.as<ITerminalBackendRegistry>(TerminalExtensions.Backend).getTerminalBackend(remoteAuthority);
-		if (!backend) {
+		if (!backend && this._multiRemoteService.isSecondary(remoteAuthority)) {
+			// Connect the additional host on demand; its backend registers when connected
+			await this._multiRemoteService.connect(remoteAuthority!);
+			await this._getOrCreateRegistration(remoteAuthority).promise;
+			backend = Registry.as<ITerminalBackendRegistry>(TerminalExtensions.Backend).getTerminalBackend(remoteAuthority);
+		} else if (!backend) {
 			// Ensure backend is initialized and try again
-			await this._backendRegistration.get(remoteAuthority)?.promise;
+			await this._backendRegistration.get(remoteAuthority?.toLowerCase() ?? '')?.promise;
 			backend = Registry.as<ITerminalBackendRegistry>(TerminalExtensions.Backend).getTerminalBackend(remoteAuthority);
 		}
 		return backend;
@@ -98,7 +114,7 @@ export class TerminalInstanceService extends Disposable implements ITerminalInst
 	}
 
 	didRegisterBackend(backend: ITerminalBackend) {
-		this._backendRegistration.get(backend.remoteAuthority)?.resolve();
+		this._getOrCreateRegistration(backend.remoteAuthority).resolve();
 		this._onDidRegisterBackend.fire(backend);
 	}
 }

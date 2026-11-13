@@ -10,6 +10,7 @@ import { ILabelService } from '../../../../platform/label/common/label.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { RemoteFileSystemRouter } from '../../../services/remote/browser/remoteFileSystemRouter.js';
 import { IMultiRemoteService } from '../../../services/remote/common/multiRemoteService.js';
+import { MultiRemoteTerminalContribution } from './multiRemoteTerminal.js';
 
 /** Registers the host-routing `vscode-remote` file system provider in local windows. */
 export class MultiRemoteFileSystemContribution extends Disposable implements IWorkbenchContribution {
@@ -31,3 +32,4 @@ export class MultiRemoteFileSystemContribution extends Disposable implements IWo
 }
 
 registerWorkbenchContribution2(MultiRemoteFileSystemContribution.ID, MultiRemoteFileSystemContribution, WorkbenchPhase.BlockStartup);
+registerWorkbenchContribution2(MultiRemoteTerminalContribution.ID, MultiRemoteTerminalContribution, WorkbenchPhase.AfterRestored);

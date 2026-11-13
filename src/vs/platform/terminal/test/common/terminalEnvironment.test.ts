@@ -6,7 +6,7 @@
 import { strictEqual } from 'assert';
 import { OperatingSystem, OS } from '../../../../base/common/platform.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
-import { collapseTildePath, sanitizeCwd, escapeNonWindowsPath } from '../../common/terminalEnvironment.js';
+import { collapseTildePath, getSecondaryHostLabel, sanitizeCwd, escapeNonWindowsPath } from '../../common/terminalEnvironment.js';
 import { PosixShellType, WindowsShellType, GeneralShellType } from '../../common/terminal.js';
 
 suite('terminalEnvironment', () => {
@@ -127,6 +127,14 @@ suite('terminalEnvironment', () => {
 		test('should remove dangerous characters', () => {
 			strictEqual(escapeNonWindowsPath('/foo/bar$(echo evil)', PosixShellType.Bash), '\'/foo/bar(echo evil)\'');
 			strictEqual(escapeNonWindowsPath('/foo/bar`whoami`', PosixShellType.Bash), '\'/foo/barwhoami\'');
+		});
+	});
+
+	suite('getSecondaryHostLabel', () => {
+		test('returns the host label for a secondary authority only', () => {
+			strictEqual(getSecondaryHostLabel('ssh-remote+devbox', undefined, () => 'devbox'), 'devbox');
+			strictEqual(getSecondaryHostLabel(undefined, undefined, () => 'devbox'), undefined);
+			strictEqual(getSecondaryHostLabel('ssh-remote+x', 'ssh-remote+X', () => 'x'), undefined);
 		});
 	});
 });

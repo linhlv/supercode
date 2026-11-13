@@ -1252,6 +1252,11 @@ export interface ITerminalBackendRegistry {
 	registerTerminalBackend(backend: ITerminalBackend): void;
 
 	/**
+	 * Removes the terminal backend registered for a remote authority, if any.
+	 */
+	unregisterTerminalBackend(remoteAuthority: string | undefined): void;
+
+	/**
 	 * Returns the registered terminal backend for a remote authority.
 	 */
 	getTerminalBackend(remoteAuthority?: string): ITerminalBackend | undefined;
@@ -1268,6 +1273,10 @@ class TerminalBackendRegistry implements ITerminalBackendRegistry {
 			throw new Error(`A terminal backend with remote authority '${key}' was already registered.`);
 		}
 		this._backends.set(key, backend);
+	}
+
+	unregisterTerminalBackend(remoteAuthority: string | undefined): void {
+		this._backends.delete(this._sanitizeRemoteAuthority(remoteAuthority));
 	}
 
 	getTerminalBackend(remoteAuthority: string | undefined): ITerminalBackend | undefined {

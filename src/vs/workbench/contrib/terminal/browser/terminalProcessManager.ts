@@ -33,7 +33,7 @@ import { IConfigurationResolverService } from '../../../services/configurationRe
 import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
 import { IHistoryService } from '../../../services/history/common/history.js';
 import { IPathService } from '../../../services/path/common/pathService.js';
-import { IRemoteAgentService } from '../../../services/remote/common/remoteAgentService.js';
+import { IMultiRemoteService } from '../../../services/remote/common/multiRemoteService.js';
 import { TaskSettingId } from '../../tasks/common/tasks.js';
 import Severity from '../../../../base/common/severity.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
@@ -154,7 +154,7 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 		@IConfigurationResolverService private readonly _configurationResolverService: IConfigurationResolverService,
 		@IWorkbenchEnvironmentService private readonly _workbenchEnvironmentService: IWorkbenchEnvironmentService,
 		@IProductService private readonly _productService: IProductService,
-		@IRemoteAgentService private readonly _remoteAgentService: IRemoteAgentService,
+		@IMultiRemoteService private readonly _multiRemoteService: IMultiRemoteService,
 		@IPathService private readonly _pathService: IPathService,
 		@IEnvironmentVariableService private readonly _environmentVariableService: IEnvironmentVariableService,
 		@ITerminalConfigurationService private readonly _terminalConfigurationService: ITerminalConfigurationService,
@@ -283,7 +283,7 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 
 				const userHomeUri = await this._pathService.userHome();
 				this.userHome = userHomeUri.path;
-				const remoteEnv = await this._remoteAgentService.getEnvironment();
+				const remoteEnv = await this._multiRemoteService.getEnvironment(this.remoteAuthority);
 				if (!remoteEnv) {
 					throw new Error(`Failed to get remote environment for remote authority "${this.remoteAuthority}"`);
 				}
@@ -625,7 +625,7 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 	async getBackendOS(): Promise<OperatingSystem> {
 		let os = OS;
 		if (!!this.remoteAuthority) {
-			const remoteEnv = await this._remoteAgentService.getEnvironment();
+			const remoteEnv = await this._multiRemoteService.getEnvironment(this.remoteAuthority);
 			if (!remoteEnv) {
 				throw new Error(`Failed to get remote environment for remote authority "${this.remoteAuthority}"`);
 			}

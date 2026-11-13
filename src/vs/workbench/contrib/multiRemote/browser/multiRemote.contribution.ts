@@ -11,6 +11,8 @@ import { ILabelService } from '../../../../platform/label/common/label.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { RemoteFileSystemRouter } from '../../../services/remote/browser/remoteFileSystemRouter.js';
 import { IMultiRemoteService } from '../../../services/remote/common/multiRemoteService.js';
+import { AddRemoteFolderToWorkspaceAction } from './multiRemoteActions.js';
+import { MultiRemoteStatusContribution } from './multiRemoteStatus.js';
 import { MultiRemoteTerminalContribution } from './multiRemoteTerminal.js';
 import { MultiRemoteWorkspaceContribution, ReconnectHostAction } from './multiRemoteWorkspace.js';
 
@@ -37,3 +39,5 @@ registerWorkbenchContribution2(MultiRemoteFileSystemContribution.ID, MultiRemote
 registerWorkbenchContribution2(MultiRemoteTerminalContribution.ID, MultiRemoteTerminalContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(MultiRemoteWorkspaceContribution.ID, MultiRemoteWorkspaceContribution, WorkbenchPhase.BlockStartup);
 registerAction2(ReconnectHostAction);
+registerWorkbenchContribution2(MultiRemoteStatusContribution.ID, MultiRemoteStatusContribution, WorkbenchPhase.AfterRestored);
+registerAction2(AddRemoteFolderToWorkspaceAction);

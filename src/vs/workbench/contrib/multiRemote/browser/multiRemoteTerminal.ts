@@ -102,30 +102,33 @@ registerAction2(class NewTerminalOnRemoteHostAction extends Action2 {
 		});
 	}
 
-	async run(accessor: ServicesAccessor): Promise<void> {
+	async run(accessor: ServicesAccessor, authorityArg?: string): Promise<void> {
 		const multiRemoteService = accessor.get(IMultiRemoteService);
 		const quickInputService = accessor.get(IQuickInputService);
 		const labelService = accessor.get(ILabelService);
 		const workspaceContextService = accessor.get(IWorkspaceContextService);
 		const terminalService = accessor.get(ITerminalService);
 
-		const hosts = multiRemoteService.getHosts().filter(host => host.state === RemoteHostState.Connected);
-		if (!multiRemoteService.isEnabled || hosts.length === 0) {
-			await quickInputService.pick([], { placeHolder: localize('noConnectedHosts', "No remote hosts are connected") });
-			return;
+		let authority = typeof authorityArg === 'string' ? authorityArg : undefined;
+		if (authority === undefined) {
+			const hosts = multiRemoteService.getHosts().filter(host => host.state === RemoteHostState.Connected);
+			if (!multiRemoteService.isEnabled || hosts.length === 0) {
+				await quickInputService.pick([], { placeHolder: localize('noConnectedHosts', "No remote hosts are connected") });
+				return;
+			}
+
+			const items: (IQuickPickItem & { authority: string })[] = hosts.map(host => ({
+				label: labelService.getHostLabel(Schemas.vscodeRemote, host.authority) || host.authority,
+				description: host.authority,
+				authority: host.authority
+			}));
+			const picked = await quickInputService.pick(items, { placeHolder: localize('pickRemoteHost', "Select the remote host to open a terminal on") });
+			if (!picked) {
+				return;
+			}
+			authority = picked.authority;
 		}
 
-		const items: (IQuickPickItem & { authority: string })[] = hosts.map(host => ({
-			label: labelService.getHostLabel(Schemas.vscodeRemote, host.authority) || host.authority,
-			description: host.authority,
-			authority: host.authority
-		}));
-		const picked = await quickInputService.pick(items, { placeHolder: localize('pickRemoteHost', "Select the remote host to open a terminal on") });
-		if (!picked) {
-			return;
-		}
-
-		const authority = picked.authority;
 		const root = workspaceContextService.getWorkspace().folders
 			.find(folder => folder.uri.scheme === Schemas.vscodeRemote && folder.uri.authority.toLowerCase() === authority.toLowerCase());
 		let cwd: URI | undefined = root?.uri;

@@ -20,6 +20,7 @@ import { getIconClasses } from '../../../../editor/common/services/getIconClasse
 import { Schemas } from '../../../../base/common/network.js';
 import { IWorkbenchEnvironmentService } from '../../environment/common/environmentService.js';
 import { IRemoteAgentService } from '../../remote/common/remoteAgentService.js';
+import { IMultiRemoteService } from '../../remote/common/multiRemoteService.js';
 import { IContextKeyService, IContextKey, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 import { equalsIgnoreCase, format, startsWithIgnoreCase } from '../../../../base/common/strings.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
@@ -161,7 +162,8 @@ export class SimpleFileDialog extends Disposable implements ISimpleFileDialog {
 		@IContextKeyService contextKeyService: IContextKeyService,
 		@IAccessibilityService private readonly accessibilityService: IAccessibilityService,
 		@IStorageService private readonly storageService: IStorageService,
-		@IConfigurationService private readonly configurationService: IConfigurationService
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IMultiRemoteService private readonly multiRemoteService: IMultiRemoteService
 	) {
 		super();
 		this.remoteAuthority = this.environmentService.remoteAuthority;
@@ -322,7 +324,18 @@ export class SimpleFileDialog extends Disposable implements ISimpleFileDialog {
 		return this.remoteAgentEnvironment;
 	}
 
-	protected getUserHome(trueHome = false): Promise<URI> {
+	/** True when the dialog is scoped to an additional remote host of a local window (see {@link IMultiRemoteService}). */
+	private isScopedToSecondaryHost(): boolean {
+		return this.scheme === Schemas.vscodeRemote && this.multiRemoteService.isSecondary(this.scopedAuthority);
+	}
+
+	protected async getUserHome(trueHome = false): Promise<URI> {
+		if (this.scopedAuthority && this.isScopedToSecondaryHost()) {
+			const environment = await this.multiRemoteService.getEnvironment(this.scopedAuthority);
+			if (environment) {
+				return URI.from({ scheme: this.scheme, authority: this.scopedAuthority, path: environment.userHome.path });
+			}
+		}
 		// When scoped to a custom authority, the platform userHome is not
 		// meaningful (it would return a local file:// path). Use the root
 		// of the scoped filesystem as the home directory instead.
@@ -1095,6 +1108,14 @@ export class SimpleFileDialog extends Disposable implements ISimpleFileDialog {
 	}
 
 	private async resolvePathFormatting(): Promise<void> {
+		if (this.scopedAuthority && this.isScopedToSecondaryHost()) {
+			const environment = await this.multiRemoteService.getEnvironment(this.scopedAuthority);
+			if (environment) {
+				this.isWindows = environment.os === OperatingSystem.Windows;
+				this.separator = this.isWindows ? '\\' : '/';
+				return;
+			}
+		}
 		if (this.scopedAuthority) {
 			const resource = URI.from({ scheme: this.scheme, authority: this.scopedAuthority, path: '/' });
 			const path = await this.pathService.getPath(resource);

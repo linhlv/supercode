@@ -10,6 +10,16 @@ ARG NODE_VERSION
 ARG NODE_ARCH
 ARG NODE_SHA256
 ARG PNPM_VERSION
+# Debian 11 is past its end of life: deb.debian.org drops its packages while the indexes still list
+# them (404s). archive.debian.org keeps a frozen, consistent copy of main, updates and security, whose
+# Release files are no longer refreshed, hence Check-Valid-Until=false.
+RUN rm -f /etc/apt/sources.list.d/* \
+	&& printf '%s\n' \
+		'deb http://archive.debian.org/debian bullseye main' \
+		'deb http://archive.debian.org/debian bullseye-updates main' \
+		'deb http://archive.debian.org/debian-security bullseye-security main' \
+		> /etc/apt/sources.list \
+	&& echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99archive
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends ca-certificates curl python3 make g++ pkg-config libkrb5-dev git file \
 	&& rm -rf /var/lib/apt/lists/*

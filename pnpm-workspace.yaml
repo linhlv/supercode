@@ -32,6 +32,7 @@ packages:
   - extensions/mermaid-markdown-features
   - extensions/microsoft-authentication
   - extensions/notebook-renderers
+  - extensions/open-remote-ssh
   - extensions/npm
   - extensions/php-language-features
   - extensions/references-view

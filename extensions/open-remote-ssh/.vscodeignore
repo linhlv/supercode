@@ -1,0 +1,9 @@
+src/**
+out/**
+docs/**
+esbuild*.mts
+tsconfig*.json
+**/*.tsbuildinfo
+**/*.map
+node_modules/**
+VENDORED.md

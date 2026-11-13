@@ -22,7 +22,7 @@ import { TestNotificationService } from '../../../../../platform/notification/te
 import product from '../../../../../platform/product/common/product.js';
 import { IProductService } from '../../../../../platform/product/common/productService.js';
 import { RemoteAuthorityResolverService } from '../../../../../platform/remote/browser/remoteAuthorityResolverService.js';
-import { IRemoteAuthorityResolverService, RemoteAuthorityResolverError, RemoteAuthorityResolverErrorCode, ResolverResult, WebSocketRemoteConnection } from '../../../../../platform/remote/common/remoteAuthorityResolver.js';
+import { IRemoteAuthorityResolverService, RemoteAuthorityResolverError, RemoteAuthorityResolverErrorCode, RemoteConnectionType, ResolverResult, WebSocketRemoteConnection } from '../../../../../platform/remote/common/remoteAuthorityResolver.js';
 import { IRemoteExtensionsScannerService } from '../../../../../platform/remote/common/remoteExtensionsScanner.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { NullTelemetryService } from '../../../../../platform/telemetry/common/telemetryUtils.js';
@@ -424,5 +424,25 @@ suite('ExtensionService', () => {
 		const error = await extService.resolveAuthorityInitial('test+remote').catch(err => err);
 
 		assert.deepStrictEqual({ attempts: extService.resolveAuthorityAttempts, notAvailable: RemoteAuthorityResolverError.isNotAvailable(error) }, { attempts: 1, notAvailable: true });
+	});
+
+	test('resolveRemoteAuthority publishes the resolved authority', async () => {
+		extService.resolveAuthorityResults.push({ authority: { authority: 'test+a', connectTo: new WebSocketRemoteConnection('127.0.0.1', 9001), connectionToken: 'tok' } });
+		const resolverService = instantiationService.get(IRemoteAuthorityResolverService);
+
+		await extService.resolveRemoteAuthority('test+a');
+		const resolved = await resolverService.resolveAuthority('test+a');
+
+		assert.deepStrictEqual({ ...resolved.authority.connectTo }, { type: RemoteConnectionType.WebSocket, host: '127.0.0.1', port: 9001 });
+	});
+
+	test('resolveRemoteAuthority publishes and rethrows errors', async () => {
+		extService.resolveAuthorityResults.push(new RemoteAuthorityResolverError('nope', RemoteAuthorityResolverErrorCode.NotAvailable));
+		const resolverService = instantiationService.get(IRemoteAuthorityResolverService);
+
+		const thrown = await extService.resolveRemoteAuthority('test+b').catch(err => err);
+		const published = await resolverService.resolveAuthority('test+b').catch(err => err);
+
+		assert.deepStrictEqual({ thrown: thrown._code, published: published._code }, { thrown: RemoteAuthorityResolverErrorCode.NotAvailable, published: RemoteAuthorityResolverErrorCode.NotAvailable });
 	});
 });

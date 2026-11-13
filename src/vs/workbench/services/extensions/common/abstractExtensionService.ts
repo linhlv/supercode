@@ -687,6 +687,19 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 		}
 	}
 
+	public async resolveRemoteAuthority(remoteAuthority: string): Promise<void> {
+		await this.whenInstalledExtensionsRegistered();
+		// `_setResolvedAuthority` only completes an existing request, so make sure one is pending
+		this._remoteAuthorityResolverService.resolveAuthority(remoteAuthority).catch(() => { });
+		try {
+			const result = await this._resolveAuthorityInitial(remoteAuthority);
+			this._remoteAuthorityResolverService._setResolvedAuthority(result.authority, result.options);
+		} catch (err) {
+			this._remoteAuthorityResolverService._setResolvedAuthorityError(remoteAuthority, err);
+			throw err;
+		}
+	}
+
 	private async _resolveAuthorityWithLogging(remoteAuthority: string): Promise<ResolverResult> {
 		const authorityPrefix = getRemoteAuthorityPrefix(remoteAuthority);
 		const sw = StopWatch.create(false);

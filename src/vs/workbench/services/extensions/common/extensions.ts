@@ -493,6 +493,13 @@ export interface IExtensionService {
 	whenInstalledExtensionsRegistered(): Promise<boolean>;
 
 	/**
+	 * Resolve any remote authority through the resolver extensions of the local extension host
+	 * and publish the result to the remote authority resolver service.
+	 * Rejects (after publishing the error) when resolving fails.
+	 */
+	resolveRemoteAuthority(remoteAuthority: string): Promise<void>;
+
+	/**
 	 * Return a specific extension
 	 * @param id An extension id
 	 */
@@ -608,6 +615,7 @@ export class NullExtensionService implements IExtensionService {
 	activateById(extensionId: ExtensionIdentifier, reason: ExtensionActivationReason): Promise<void> { return Promise.resolve(undefined); }
 	activationEventIsDone(_activationEvent: string): boolean { return false; }
 	whenInstalledExtensionsRegistered(): Promise<boolean> { return Promise.resolve(true); }
+	resolveRemoteAuthority(_remoteAuthority: string): Promise<void> { return Promise.reject(new Error('Not supported')); }
 	getExtension() { return Promise.resolve(undefined); }
 	readExtensionPointContributions<T>(_extPoint: IExtensionPoint<T>): Promise<ExtensionPointContribution<T>[]> { return Promise.resolve(Object.create(null)); }
 	getExtensionsStatus(): { [id: string]: IExtensionsStatus } { return Object.create(null); }

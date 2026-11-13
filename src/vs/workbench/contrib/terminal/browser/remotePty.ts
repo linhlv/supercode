@@ -7,7 +7,7 @@ import { Barrier } from '../../../../base/common/async.js';
 import { ITerminalLaunchResult, IProcessPropertyMap, ITerminalChildProcess, ITerminalLaunchError, ITerminalLogService, ProcessPropertyType } from '../../../../platform/terminal/common/terminal.js';
 import { BasePty } from '../common/basePty.js';
 import { RemoteTerminalChannelClient } from '../common/remote/remoteTerminalChannel.js';
-import { IRemoteAgentService } from '../../../services/remote/common/remoteAgentService.js';
+import { IMultiRemoteService } from '../../../services/remote/common/multiRemoteService.js';
 import { hasKey } from '../../../../base/common/types.js';
 
 export class RemotePty extends BasePty implements ITerminalChildProcess {
@@ -16,8 +16,9 @@ export class RemotePty extends BasePty implements ITerminalChildProcess {
 	constructor(
 		id: number,
 		shouldPersist: boolean,
+		private readonly _remoteAuthority: string | undefined,
 		private readonly _remoteTerminalChannel: RemoteTerminalChannelClient,
-		@IRemoteAgentService private readonly _remoteAgentService: IRemoteAgentService,
+		@IMultiRemoteService private readonly _multiRemoteService: IMultiRemoteService,
 		@ITerminalLogService private readonly _logService: ITerminalLogService
 	) {
 		super(id, shouldPersist);
@@ -26,7 +27,7 @@ export class RemotePty extends BasePty implements ITerminalChildProcess {
 
 	async start(): Promise<ITerminalLaunchError | ITerminalLaunchResult | undefined> {
 		// Fetch the environment to check shell permissions
-		const env = await this._remoteAgentService.getEnvironment();
+		const env = await this._multiRemoteService.getEnvironment(this._remoteAuthority);
 		if (!env) {
 			// Extension host processes are only allowed in remote extension hosts currently
 			throw new Error('Could not fetch remote environment');

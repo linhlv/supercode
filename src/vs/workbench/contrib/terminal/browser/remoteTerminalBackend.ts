@@ -210,7 +210,7 @@ export class RemoteTerminalBackend extends BaseTerminalBackend implements ITermi
 			unicodeVersion,
 			remoteEnv.os
 		);
-		const pty = this._instantiationService.createInstance(RemotePty, result.persistentTerminalId, shouldPersist, this._remoteTerminalChannel);
+		const pty = this._instantiationService.createInstance(RemotePty, result.persistentTerminalId, shouldPersist, this.remoteAuthority, this._remoteTerminalChannel);
 		this._ptys.set(result.persistentTerminalId, pty);
 		return pty;
 	}
@@ -222,7 +222,7 @@ export class RemoteTerminalBackend extends BaseTerminalBackend implements ITermi
 
 		try {
 			await this._remoteTerminalChannel.attachToProcess(id);
-			const pty = this._instantiationService.createInstance(RemotePty, id, true, this._remoteTerminalChannel);
+			const pty = this._instantiationService.createInstance(RemotePty, id, true, this.remoteAuthority, this._remoteTerminalChannel);
 			this._ptys.set(id, pty);
 			return pty;
 		} catch (e) {

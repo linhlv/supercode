@@ -148,6 +148,7 @@ import './contrib/processExplorer/electron-browser/processExplorer.contribution.
 
 // Remote
 import './contrib/remote/electron-browser/remote.contribution.js';
+import './contrib/multiRemote/browser/multiRemote.contribution.js';
 
 // Terminal
 import './contrib/terminal/electron-browser/terminal.contribution.js';

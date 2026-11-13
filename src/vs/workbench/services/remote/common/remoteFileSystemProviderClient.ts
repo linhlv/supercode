@@ -50,6 +50,11 @@ export class RemoteFileSystemProviderClient extends DiskFileSystemProviderClient
 		return disposables;
 	}
 
+	/** Creates a client for the given (possibly secondary) host connection. */
+	static create(environment: IRemoteAgentEnvironment, connection: IRemoteAgentConnection): RemoteFileSystemProviderClient {
+		return new RemoteFileSystemProviderClient(environment, connection);
+	}
+
 	private constructor(remoteAgentEnvironment: IRemoteAgentEnvironment, connection: IRemoteAgentConnection) {
 		super(connection.getChannel(REMOTE_FILE_SYSTEM_CHANNEL_NAME), { pathCaseSensitive: remoteAgentEnvironment.os === OperatingSystem.Linux });
 	}

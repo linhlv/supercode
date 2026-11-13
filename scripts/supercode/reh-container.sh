@@ -69,7 +69,9 @@ case "$MODE" in
       install -m 755 "/deps/$TARGET-node" "$node_folder/node"
     fi
     # The source has no .git folder, so the build takes the commit from here
-    (cd /w/vscode && BUILD_SOURCEVERSION="$COMMIT" pnpm run gulp "$TARGET-min")
+    # BUILD_SOURCEVERSION makes extensions/copilot/.esbuild.mts take the CI path, which requires
+    # VSCODE_QUALITY; 'stable' needs no publish counter and only matters to the build when 'insider'.
+    (cd /w/vscode && BUILD_SOURCEVERSION="$COMMIT" VSCODE_QUALITY=stable pnpm run gulp "$TARGET-min")
     # The server folder is the tarball's single top level folder (server-setup.sh uses --strip-components 1)
     tar -czf "/out/$TARGET.tar.gz" -C /w "$TARGET"
     rm -rf "/w/$TARGET"

@@ -9,9 +9,10 @@ import { ILogger } from '../common/logger';
 import { AUTH_CONFIRMED_RE, CommandRunner, LineParser } from './nativeSshParser';
 import { RemotePlatform } from '../common/platform';
 import { NativeSshServerClient, NativeSshKeepalive } from './nativeSshServerClient';
-import { Architecture, buildServerInstallOptions, generateBashInstallScript, generatePowerShellInstallScript, parseKernelName, parseMachineArch, parseServerInstallOutput, Platform, ServerInstallError, ServerInstallResult } from '../serverSetup';
+import { Architecture, buildServerInstallOptions, generateBashInstallScript, resolveBashServerDataDir, generatePowerShellInstallScript, parseKernelName, parseMachineArch, parseServerInstallOutput, Platform, ServerInstallError, ServerInstallOptions, ServerInstallResult } from '../serverSetup';
 import { ServerVersion } from '../server-config/types';
 import { getNativeSshSocketPath } from './nativeSshConnection';
+import { localServerPackageDir, pickServerPackage, remoteTarballPath, requireLocalServerPackage, serverInstallDir, uploadServerPackage } from '../serverPackage';
 
 export interface NativeSshConnectionOptions {
     authorityKey: string;
@@ -419,6 +420,7 @@ export class NativeSshManager {
             }
         } else {
             await this.waitBashReady();
+            await this.uploadServerPackageIfNeeded(installOptions, detectedPlatform);
 
             remoteCmd = `scriptWrapper() {\n ${generateBashInstallScript(installOptions, extensionPath)}\n }\n scriptWrapper`;
         }
@@ -473,6 +475,43 @@ export class NativeSshManager {
             tmpDir: resultMap.tmpDir,
             ...remoteEnvVars
         };
+    }
+
+    /**
+     * Linux remotes get the server from the package built on this machine (`scripts/supercode/build.sh`),
+     * streamed over ssh, instead of a download. Skipped when this commit is already installed there.
+     * Fails when the package was not built: there is no download fallback.
+     */
+    private async uploadServerPackageIfNeeded(installOptions: ServerInstallOptions, detectedPlatform: Platform): Promise<void> {
+        if (detectedPlatform !== 'linux') {
+            return;
+        }
+
+        const dataFolder = resolveBashServerDataDir(installOptions.customInstallPath, installOptions.serverDataFolderName);
+        const serverScript = `${serverInstallDir(dataFolder, installOptions.commit)}/bin/${installOptions.serverApplicationName}`;
+        const probe = await this.runCommand(
+            `echo "==$(uname -s)|$(uname -m)|$(ldd --version 2>&1 | grep -qi musl && echo musl)|$([ -f "${serverScript}" ] && echo installed)=="`,
+            (stdout) => {
+                const match = stdout ? /==([^|=]*)\|([^|=]*)\|([^|=]*)\|([^|=]*)==/.exec(stdout) : null;
+                return match ? { kernel: match[1], machine: match[2], isMusl: match[3] === 'musl', installed: match[4] === 'installed' } : undefined;
+            }
+        );
+        if (probe.installed) {
+            return;
+        }
+
+        const basename = pickServerPackage(probe);
+        const localFile = await requireLocalServerPackage(localServerPackageDir(installOptions.commit), basename, `${probe.kernel} ${probe.machine}${probe.isMusl ? ' (musl)' : ''}`);
+        this.options.logger.info(`Uploading ${localFile} to ${dataFolder}`);
+        await uploadServerPackage({
+            sshExecutable: this.connection.sshExecutable,
+            sshArgs: this.connection.sshArgs,
+            localFile,
+            dataFolder,
+            commit: installOptions.commit,
+            basename,
+        });
+        installOptions.localTarball = remoteTarballPath('$SERVER_DATA_DIR', installOptions.commit, basename);
     }
 
     private async waitBashReady(): Promise<void> {

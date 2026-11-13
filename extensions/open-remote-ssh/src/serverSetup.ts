@@ -95,6 +95,8 @@ export type ServerInstallOptions = {
     serverPlatform: Platform;
     serverArch: Architecture;
     scriptPreventExit: boolean;
+    /** Remote path (may use `$SERVER_DATA_DIR`) of an uploaded server tarball that replaces the download. */
+    localTarball?: string;
 };
 
 export type ServerInstallResult = {
@@ -401,11 +403,16 @@ export function parseServerInstallOutput(str: string, scriptId: string): { [k: s
     return resultMap;
 }
 
-export function generateBashInstallScript({ id, quality, version, commit, release, extensionIds, envVariables, sendEnvVars, useSocketPath, serverApplicationName, serverDataFolderName, serverDownloadUrlTemplate, customInstallPath, serverValidation, serverPlatform, serverArch, scriptPreventExit }: ServerInstallOptions, extensionPath: string): string {
-    const extensions = extensionIds.map(extId => '--install-extension ' + extId).join(' ');
-    const serverDataDir = customInstallPath
+/** Server data folder as the bash install script sees it (`$HOME` is expanded by the remote shell). */
+export function resolveBashServerDataDir(customInstallPath: string | undefined, serverDataFolderName: string): string {
+    return customInstallPath
         ? customInstallPath.replace(/^~(?=\/|$)/, '$HOME')
         : `$HOME/${serverDataFolderName}`;
+}
+
+export function generateBashInstallScript({ id, quality, version, commit, release, extensionIds, envVariables, sendEnvVars, useSocketPath, serverApplicationName, serverDataFolderName, serverDownloadUrlTemplate, customInstallPath, serverValidation, serverPlatform, serverArch, scriptPreventExit, localTarball }: ServerInstallOptions, extensionPath: string): string {
+    const extensions = extensionIds.map(extId => '--install-extension ' + extId).join(' ');
+    const serverDataDir = resolveBashServerDataDir(customInstallPath, serverDataFolderName);
     const listenFlag = useSocketPath
         ? `--socket-path="$TMP_DIR/vscode-server-sock-${crypto.randomUUID()}"`
         : '--port=0';
@@ -431,7 +438,8 @@ export function generateBashInstallScript({ id, quality, version, commit, releas
         SERVER_CONNECTION_TOKEN: crypto.randomUUID(),
         SERVER_PLATFORM: serverPlatform,
         SERVER_ARCH: serverArch,
-        SCRIPT_PREVENT_EXIT: String(scriptPreventExit)
+        SCRIPT_PREVENT_EXIT: String(scriptPreventExit),
+        SERVER_LOCAL_TARBALL: localTarball ?? ''
     }, extensionPath);
 }
 

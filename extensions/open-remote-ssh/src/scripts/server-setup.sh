@@ -26,6 +26,7 @@ SERVER_PLATFORM="%%SERVER_PLATFORM%%"
 SERVER_ARCH="%%SERVER_ARCH%%"
 SERVER_CONNECTION_TOKEN=
 SERVER_DOWNLOAD_URL=
+SERVER_LOCAL_TARBALL="%%SERVER_LOCAL_TARBALL%%"
 SERVER_VALIDATION_FLAG="%%SERVER_VALIDATION_FLAG%%"
 SCRIPT_PREVENT_EXIT=%%SCRIPT_PREVENT_EXIT%%
 
@@ -145,6 +146,9 @@ fi
 # adjust platform for vscodium download, if needed
 if [[ $OS_RELEASE_ID = alpine ]]; then
   PLATFORM="alpine"
+elif command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
+  # musl libc (Alpine derivatives that do not report ID=alpine)
+  PLATFORM="alpine"
 fi
 
 SERVER_DOWNLOAD_URL="$(echo "%%SERVER_DOWNLOAD_URL_TEMPLATE%%" | sed "s/\${quality}/$DISTRO_QUALITY/g" | sed "s/\${version}/$DISTRO_VERSION/g" | sed "s/\${commit}/$DISTRO_COMMIT/g" | sed "s/\${os}/$PLATFORM/g" | sed "s/\${arch}/$SERVER_ARCH/g" | sed "s/\${release}/$DISTRO_VSCODIUM_RELEASE/g")"
@@ -168,7 +172,10 @@ if [[ ! -f $SERVER_SCRIPT ]]; then
 
   pushd "$SERVER_DIR" > /dev/null || exit
 
-  if command -v wget >/dev/null 2>&1; then
+  if [[ -n "$SERVER_LOCAL_TARBALL" && -f "$SERVER_LOCAL_TARBALL" ]]; then
+    # Package uploaded from the local machine: use it instead of downloading
+    mv -f "$SERVER_LOCAL_TARBALL" vscode-server.tar.gz
+  elif command -v wget >/dev/null 2>&1; then
     wget --tries=3 --timeout=10 --continue --no-verbose -O vscode-server.tar.gz "$SERVER_DOWNLOAD_URL"
   elif command -v curl >/dev/null 2>&1; then
     curl --retry 3 --connect-timeout 10 --location --show-error --silent --output vscode-server.tar.gz "$SERVER_DOWNLOAD_URL"

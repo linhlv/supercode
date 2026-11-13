@@ -41,6 +41,16 @@ Behaviour
   host gets its own `SSH: <host>` label; it is disposed with the session.
 - New command `remote-ssh.addFolderToWorkspace` ("Add SSH Folder to Workspace...", command palette and
   `view/title` of the Explorer) that runs the core `workbench.action.addRemoteFolderToWorkspace`.
+- Server packages (fork-specific): the native backend no longer downloads the server for Linux remotes. Before the
+  install script runs, and only when `<dataDir>/bin/<commit>/bin/<serverApplicationName>` is not there yet, it probes
+  `uname -s`, `uname -m` and musl (`ldd --version`), picks the tarball with `pickServerPackage`
+  (`src/serverPackage.ts`: x64/arm64, glibc or musl/Alpine) from `~/.supercode/server-packages/<commit>/`
+  (written by `scripts/supercode/build.sh`) and streams it with a second system `ssh` process
+  (same arguments and `BatchMode=yes`, minus `-D`/`-v`) as `cat > <dataDir>/<commit>-<tarball>`. A missing package or
+  32-bit ARM fails the connection; there is no download fallback. Edits: `nativeSshManager.ts`
+  (`uploadServerPackageIfNeeded`), `serverSetup.ts` (`localTarball` option, `resolveBashServerDataDir`),
+  `scripts/server-setup.sh` (`SERVER_LOCAL_TARBALL` replaces the download when the file exists; musl via `ldd`
+  also selects the `alpine` platform). The opt-in `ssh2` backend and non-Linux remotes are unchanged (still download).
 
 ## Tests
 `src/test/*.test.ts` (plain node mocha, no `vscode` import): `pnpm -C extensions/open-remote-ssh test`.

@@ -85,11 +85,14 @@ suite('multi-remote window', () => {
 	});
 
 	test('terminals start on the right host in the root folder', async () => {
+		// All hosts share this machine's file system, so the terminal names its host through the
+		// variable that the test resolver sets on each server it starts
 		for (const root of [rootA, rootB]) {
 			const terminal = createTerminal(root);
-			terminal.sendText('pwd > where.txt');
+			terminal.sendText('echo "$TESTRESOLVER_AUTHORITY $(pwd)" > where.txt');
 			const where = vscode.Uri.joinPath(root, 'where.txt');
-			await poll(() => readText(where), content => content.trim() === root.path, `pwd written to ${where.toString()}`, 300, 100);
+			const expected = `${root.authority} ${root.path}`;
+			await poll(() => readText(where), content => content.trim() === expected, `"${expected}" written to ${where.toString()}`, 300, 100);
 		}
 	});
 

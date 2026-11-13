@@ -169,6 +169,8 @@ export function activate(context: vscode.ExtensionContext) {
 			const { updateUrl, commit, quality, serverDataFolderName, serverApplicationName, dataFolderName } = getProductConfiguration();
 			const commandArgs = ['--host=127.0.0.1', '--port=0', '--disable-telemetry', '--disable-experiments', '--use-host-proxy', '--accept-server-license-terms', '--force-disable-user-env'];
 			const env = getNewEnv();
+			// Lets processes on the server, such as terminals, tell which authority they run on
+			env['TESTRESOLVER_AUTHORITY'] = authority;
 			const baseDataDir = process.env['TESTRESOLVER_DATA_FOLDER'] || path.join(os.homedir(), `${serverDataFolderName || dataFolderName}-testresolver`);
 			// The first authority uses the data folder; every other authority gets a folder of its own in it
 			dataFolderAuthority ??= authority;

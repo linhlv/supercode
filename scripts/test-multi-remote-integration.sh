@@ -10,10 +10,51 @@ else
 	ROOT=$(dirname $(dirname $(readlink -f $0)))
 fi
 
+# The physical path of the folder in which `mktemp -d` creates folders. Cleanup only deletes folders inside it.
+TEMP_PROBE=$(mktemp -u 2>/dev/null) || TEMP_PROBE=""
+TEMP_ROOT=""
+if [[ "$TEMP_PROBE" == /* ]]; then
+	TEMP_ROOT=$(cd "$(dirname "$TEMP_PROBE")" 2>/dev/null && pwd -P) || TEMP_ROOT=""
+fi
+
 # Creates a temporary folder and prints its physical path, so that it matches what `pwd` prints in it.
+# Fails when `mktemp` fails, instead of printing the current folder.
 make_temp_folder() {
-	(cd "$(mktemp -d 2>/dev/null)" && pwd -P)
+	local dir
+	dir=$(mktemp -d 2>/dev/null) || exit 1
+	[ -n "$dir" ] || exit 1
+	(cd "$dir" && pwd -P)
 }
+
+# Deletes a folder created by make_temp_folder, and refuses anything outside the system temp folder.
+remove_temp_folder() {
+	if [[ -z "$1" ]]; then
+		return 0
+	fi
+	if [[ -z "$TEMP_ROOT" || "$1" != "$TEMP_ROOT"/?* || "$1" == *"/.."* ]]; then
+		echo "Refusing to delete '$1': it is not inside the temp folder '$TEMP_ROOT'." >&2
+		return 0
+	fi
+	rm -rf -- "$1" || true
+}
+
+cleanup() {
+	local status=$?
+	local folder
+	for folder in "$VSCODEUSERDATADIR" "$TESTRESOLVER_DATA_FOLDER" "$WORKSPACE_FOLDER" "$FOLDER_LOCAL" "$FOLDER_A" "$FOLDER_B"; do
+		remove_temp_folder "$folder"
+	done
+	if [[ $status -ne 0 ]]; then
+		echo "Multi-remote integration tests failed with exit code $status." >&2
+	fi
+}
+VSCODEUSERDATADIR=""
+TESTRESOLVER_DATA_FOLDER=""
+WORKSPACE_FOLDER=""
+FOLDER_LOCAL=""
+FOLDER_A=""
+FOLDER_B=""
+trap cleanup EXIT
 
 VSCODEUSERDATADIR=$(make_temp_folder)
 VSCODECRASHDIR=$ROOT/.build/crashes
@@ -23,15 +64,6 @@ WORKSPACE_FOLDER=$(make_temp_folder)
 FOLDER_LOCAL=$(make_temp_folder)
 FOLDER_A=$(make_temp_folder)
 FOLDER_B=$(make_temp_folder)
-
-cleanup() {
-	local status=$?
-	rm -rf -- "$VSCODEUSERDATADIR" "$TESTRESOLVER_DATA_FOLDER" "$WORKSPACE_FOLDER" "$FOLDER_LOCAL" "$FOLDER_A" "$FOLDER_B" || true
-	if [[ $status -ne 0 ]]; then
-		echo "Multi-remote integration tests failed with exit code $status." >&2
-	fi
-}
-trap cleanup EXIT
 
 cd $ROOT
 

@@ -47,7 +47,11 @@ case "$MODE" in
       rm -rf /w/vscode /w/.commit
       mkdir -p /w/vscode
       tar -xf /in/source.tar -C /w/vscode
-      (cd /w/vscode && ELECTRON_SKIP_BINARY_DOWNLOAD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm install --frozen-lockfile)
+      # build/npm/postinstall.ts runs `git config`, which needs a repository; the archive has no .git.
+      # The build takes its commit from BUILD_SOURCEVERSION, so an empty repository is enough.
+      git -C /w/vscode init -q
+      # Keep the package store in the volume so a re-run after a failed install doesn't download everything again.
+      (cd /w/vscode && npm_config_store_dir=/w/.pnpm-store ELECTRON_SKIP_BINARY_DOWNLOAD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm install --frozen-lockfile)
       echo "$COMMIT" > /w/.commit
     fi
     rm -rf /w/vscode/remote/node_modules /w/vscode/remote/web/node_modules

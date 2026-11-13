@@ -6,7 +6,7 @@
 import { Emitter, Event } from '../../../../base/common/event.js';
 import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
 import { isWeb } from '../../../../base/common/platform.js';
-import { getErrorMessage } from '../../../../base/common/errors.js';
+import { CancellationError, getErrorMessage } from '../../../../base/common/errors.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
@@ -95,15 +95,14 @@ export class MultiRemoteService extends Disposable implements IMultiRemoteServic
 	private async _connect(entry: IHostEntry, authority: string): Promise<IRemoteHostConnection> {
 		try {
 			await this._extensionService.resolveRemoteAuthority(authority);
+			this._throwIfCancelled(entry, authority);
 			const connection = this._createConnection(authority);
 			entry.disposables.add(connection);
 			this._monitor(entry, connection, authority);
 			const environment = await this._fetchEnvironment(connection);
+			this._throwIfCancelled(entry, authority);
 			if (typeof environment.reconnectionGraceTime === 'number') {
 				connection.updateGraceTime(environment.reconnectionGraceTime);
-			}
-			if (this._hosts.get(authority.toLowerCase()) !== entry || entry.disposables.isDisposed) {
-				throw new Error(`Connection to ${authority} was cancelled`);
 			}
 			entry.host = { authority, connection, environment };
 			this._setState(entry, RemoteHostState.Connected);
@@ -116,7 +115,16 @@ export class MultiRemoteService extends Disposable implements IMultiRemoteServic
 			}
 			throw error;
 		} finally {
-			entry.connectPromise = undefined;
+			if (entry.status.state !== RemoteHostState.Disconnected) {
+				entry.connectPromise = undefined;
+			}
+		}
+	}
+
+	/** Throws when the entry was abandoned by `disconnect` or service disposal while connecting. */
+	private _throwIfCancelled(entry: IHostEntry, authority: string): void {
+		if (this._hosts.get(authority.toLowerCase()) !== entry || entry.disposables.isDisposed) {
+			throw new CancellationError();
 		}
 	}
 
@@ -153,7 +161,12 @@ export class MultiRemoteService extends Disposable implements IMultiRemoteServic
 			return;
 		}
 		if (entry.connectPromise) {
-			await entry.connectPromise.catch(() => undefined);
+			// Abandon the in-flight attempt: it rejects with a cancellation error and a later connect starts fresh.
+			entry.connectPromise = undefined;
+			entry.host = undefined;
+			this._setState(entry, RemoteHostState.Disconnected);
+			entry.disposables.dispose();
+			return;
 		}
 		const connection = entry.host?.connection;
 		entry.host = undefined;

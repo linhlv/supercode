@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { DeferredPromise } from '../../../../../base/common/async.js';
+import { isCancellationError } from '../../../../../base/common/errors.js';
 import { Emitter } from '../../../../../base/common/event.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { mock } from '../../../../../base/test/common/mock.js';
@@ -67,7 +69,7 @@ class TestMultiRemoteService extends MultiRemoteService {
 suite('MultiRemoteService', () => {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	function create(options: { primary?: string; failFor?: string } = {}) {
+	function create(options: { primary?: string; failFor?: string; holdResolve?: DeferredPromise<void> } = {}) {
 		const resolved: string[] = [];
 		const cleared: string[] = [];
 		const primaryEnvironment = { userHome: URI.file('/primary') } as IRemoteAgentEnvironment;
@@ -77,6 +79,9 @@ suite('MultiRemoteService', () => {
 			new class extends mock<IExtensionService>() {
 				override async resolveRemoteAuthority(authority: string) {
 					resolved.push(authority);
+					if (options.holdResolve) {
+						await options.holdResolve.p;
+					}
 					if (authority === options.failFor) {
 						throw new Error('resolver says no');
 					}
@@ -160,5 +165,20 @@ suite('MultiRemoteService', () => {
 		await service.connect('ssh-remote+a');
 		await service.disconnect('ssh-remote+a');
 		assert.deepStrictEqual({ end: service.created[0].endCalls, disposed: service.created[0].disposed, state: service.getState('ssh-remote+a') }, { end: 1, disposed: true, state: 'disconnected' });
+	});
+
+	test('disconnect while connecting cancels and allows a fresh connect', async () => {
+		const hold = new DeferredPromise<void>();
+		const { service } = create({ holdResolve: hold });
+		const pending = service.connect('ssh-remote+a');
+		const rejection = pending.then(() => 'resolved', error => isCancellationError(error) ? 'cancelled' : 'other');
+		await service.disconnect('ssh-remote+a');
+		const state = service.getState('ssh-remote+a');
+		hold.complete();
+		const outcome = await rejection;
+		const fresh = await service.connect('ssh-remote+a');
+		assert.deepStrictEqual({ state, outcome, created: service.created.length, freshState: service.getState('ssh-remote+a'), freshHome: fresh.environment.userHome.path }, {
+			state: 'disconnected', outcome: 'cancelled', created: 1, freshState: 'connected', freshHome: '/home/a'
+		});
 	});
 });

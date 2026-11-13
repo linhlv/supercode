@@ -17,6 +17,7 @@ import { IWorkspaceContextService } from '../../../../platform/workspace/common/
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IMultiRemoteService, IRemoteHostStatus, RemoteHostState } from '../../../services/remote/common/multiRemoteService.js';
 import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
+import { hasRoots } from './multiRemoteWorkspace.js';
 
 interface IHostPickItem extends IQuickPickItem {
 	readonly authority?: string;
@@ -73,7 +74,8 @@ export class MultiRemoteStatusContribution extends Disposable implements IWorkbe
 			return;
 		}
 
-		const hosts = this.multiRemoteService.getHosts();
+		// Hosts kept only for a terminal or a dialog are listed in the Hosts picker, not counted here
+		const hosts = this.multiRemoteService.getHosts().filter(host => hasRoots(host.authority, this.contextService));
 		const connected = hosts.filter(host => host.state === RemoteHostState.Connected).length;
 		const text = `$(remote) ${connected}/${hosts.length}`;
 		const tooltip = hosts.map(host => this.describe(host)).join('\n') || localize('multiRemote.noHosts', "No remote hosts");

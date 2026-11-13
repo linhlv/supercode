@@ -21,6 +21,7 @@ import { IWorkspaceContextService, IWorkspaceFolder, IWorkspaceFoldersChangeEven
 import { IMultiRemoteService, IRemoteHostConnection, IRemoteHostStatus, RemoteHostState } from '../../../../services/remote/common/multiRemoteService.js';
 import { IStatusbarEntry, IStatusbarEntryAccessor, IStatusbarService } from '../../../../services/statusbar/browser/statusbar.js';
 import { IWorkspaceEditingService } from '../../../../services/workspaces/common/workspaceEditing.js';
+import { ITerminalInstance, ITerminalService } from '../../../terminal/browser/terminal.js';
 import { AddRemoteFolderToWorkspaceAction } from '../../browser/multiRemoteActions.js';
 import { MultiRemoteStatusContribution } from '../../browser/multiRemoteStatus.js';
 
@@ -37,13 +38,19 @@ suite('MultiRemoteActions', () => {
 	let hostLabel: string;
 	let enabled: boolean;
 	let connectCalls: number;
+	let disconnected: string[];
+	let workspaceFolders: IWorkspaceFolder[];
+	let terminalAuthorities: string[];
 
 	function accessor(): ServicesAccessor {
 		const services = new Map<unknown, unknown>([
 			[IMultiRemoteService, {
 				isEnabled: enabled,
-				connect: () => { connectCalls++; return connectResult; }
+				connect: () => { connectCalls++; return connectResult; },
+				disconnect: async (authority: string) => { disconnected.push(authority); }
 			} as Partial<IMultiRemoteService>],
+			[IWorkspaceContextService, { getWorkspace: () => ({ folders: workspaceFolders }) } as Partial<IWorkspaceContextService>],
+			[ITerminalService, { instances: terminalAuthorities.map(remoteAuthority => ({ remoteAuthority }) as ITerminalInstance) } as Partial<ITerminalService>],
 			[IProgressService, { withProgress: (_options: unknown, task: () => Promise<unknown>) => task() } as Partial<IProgressService>],
 			[IFileDialogService, { showOpenDialog: async (options: IOpenDialogOptions) => { dialogCalls.push(options); return dialogResult; } } as Partial<IFileDialogService>],
 			[IWorkspaceEditingService, { addFolders: async (folders: { uri: URI; name?: string }[]) => { added.push(folders); } } as Partial<IWorkspaceEditingService>],
@@ -70,6 +77,9 @@ suite('MultiRemoteActions', () => {
 		hostLabel = 'SSH: alice@box';
 		enabled = true;
 		connectCalls = 0;
+		disconnected = [];
+		workspaceFolders = [];
+		terminalAuthorities = [];
 	});
 
 	test('adds picked folders from the host\'s home', async () => {
@@ -88,10 +98,20 @@ suite('MultiRemoteActions', () => {
 		});
 	});
 
-	test('cancelled dialog adds nothing', async () => {
+	test('cancelled dialog adds nothing and disconnects the host it connected', async () => {
 		dialogResult = undefined;
 		await new AddRemoteFolderToWorkspaceAction().run(accessor(), AUTHORITY);
-		assert.deepStrictEqual({ dialogs: dialogCalls.length, added }, { dialogs: 1, added: [] });
+		assert.deepStrictEqual({ dialogs: dialogCalls.length, added, disconnected }, { dialogs: 1, added: [], disconnected: [AUTHORITY] });
+	});
+
+	test('cancelled dialog keeps a host that has roots or terminals', async () => {
+		const root = URI.from({ scheme: Schemas.vscodeRemote, authority: AUTHORITY, path: '/w' });
+		workspaceFolders = [{ uri: root, name: 'w', index: 0, toResource: p => URI.joinPath(root, p) }];
+		await new AddRemoteFolderToWorkspaceAction().run(accessor(), AUTHORITY);
+		workspaceFolders = [];
+		terminalAuthorities = [AUTHORITY];
+		await new AddRemoteFolderToWorkspaceAction().run(accessor(), AUTHORITY);
+		assert.deepStrictEqual({ dialogs: dialogCalls.length, disconnected }, { dialogs: 2, disconnected: [] });
 	});
 
 	test('does nothing in a window where multi-remote is disabled', async () => {
@@ -159,9 +179,16 @@ suite('MultiRemoteActions', () => {
 
 		test('status text counts connected hosts', () => {
 			hosts = [{ authority: 'ssh-remote+a', state: RemoteHostState.Connected }, { authority: 'ssh-remote+b', state: RemoteHostState.Failed, error: 'boom' }];
-			folders = [remoteFolder('ssh-remote+a')];
+			folders = [remoteFolder('ssh-remote+a'), remoteFolder('ssh-remote+b')];
 			create();
 			assert.deepStrictEqual({ id: entryId, text: entry?.text }, { id: 'status.multiRemote', text: '$(remote) 1/2' });
+		});
+
+		test('status counts only hosts that have roots', () => {
+			hosts = [{ authority: 'ssh-remote+a', state: RemoteHostState.Connected }, { authority: 'ssh-remote+b', state: RemoteHostState.Connected }, { authority: 'ssh-remote+c', state: RemoteHostState.Failed }];
+			folders = [remoteFolder('ssh-remote+A')];
+			create();
+			assert.strictEqual(entry?.text, '$(remote) 1/1');
 		});
 
 		test('hidden without remote roots and shown once one is added', () => {

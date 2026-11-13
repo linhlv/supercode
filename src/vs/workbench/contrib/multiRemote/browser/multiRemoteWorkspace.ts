@@ -24,6 +24,18 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { IMultiRemoteService, RemoteHostState } from '../../../services/remote/common/multiRemoteService.js';
 import { ExplorerRootContext } from '../../files/common/files.js';
 import { IExplorerService } from '../../files/browser/files.js';
+import { ITerminalService } from '../../terminal/browser/terminal.js';
+
+/** Whether a remote host still has workspace roots or terminals, so it has to stay connected. */
+export function isHostInUse(authority: string, contextService: IWorkspaceContextService, terminalService: ITerminalService): boolean {
+	return hasRoots(authority, contextService) || terminalService.instances.some(instance => instance.remoteAuthority?.toLowerCase() === authority.toLowerCase());
+}
+
+/** Whether `authority` is the host of at least one workspace root. */
+export function hasRoots(authority: string, contextService: IWorkspaceContextService): boolean {
+	const key = authority.toLowerCase();
+	return contextService.getWorkspace().folders.some(folder => folder.uri.scheme === Schemas.vscodeRemote && folder.uri.authority.toLowerCase() === key);
+}
 
 /**
  * Connects every remote host referenced by a workspace folder in the background, refreshes
@@ -44,6 +56,7 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IEditorService private readonly editorService: IEditorService,
 		@ILabelService private readonly labelService: ILabelService,
+		@ITerminalService private readonly terminalService: ITerminalService,
 		@IDecorationsService decorationsService: IDecorationsService
 	) {
 		super();
@@ -55,7 +68,10 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 		this._register(decorationsService.registerDecorationsProvider(this.createDecorationsProvider()));
 
 		this.connectHosts(this.contextService.getWorkspace().folders);
-		this._register(this.contextService.onDidChangeWorkspaceFolders(e => this.connectHosts(e.added)));
+		this._register(this.contextService.onDidChangeWorkspaceFolders(e => {
+			this.connectHosts(e.added);
+			this.disconnectUnusedHosts(e.removed);
+		}));
 		this._register(this.multiRemoteService.onDidChangeHostState(status => {
 			this.errors.set(status.authority.toLowerCase(), status.error);
 			if (status.state === RemoteHostState.Connected) {
@@ -80,6 +96,21 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 			seen.add(authority.toLowerCase());
 			// Failures are surfaced through the host state
 			this.multiRemoteService.connect(authority).catch(() => { });
+		}
+	}
+
+	/** Disconnects the hosts of removed roots that have no root and no terminal left. */
+	private disconnectUnusedHosts(removed: readonly IWorkspaceFolder[]): void {
+		const seen = new Set<string>();
+		for (const folder of removed) {
+			const authority = folder.uri.authority;
+			if (folder.uri.scheme !== Schemas.vscodeRemote || !authority || seen.has(authority.toLowerCase())) {
+				continue;
+			}
+			seen.add(authority.toLowerCase());
+			if (!isHostInUse(authority, this.contextService, this.terminalService)) {
+				this.multiRemoteService.disconnect(authority).catch(() => { /* surfaced through the host state */ });
+			}
 		}
 	}
 

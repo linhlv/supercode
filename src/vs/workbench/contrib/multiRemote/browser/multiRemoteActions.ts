@@ -16,7 +16,10 @@ import { INotificationService } from '../../../../platform/notification/common/n
 import { IProgressService, ProgressLocation } from '../../../../platform/progress/common/progress.js';
 import { RemoteNameContext } from '../../../common/contextkeys.js';
 import { IMultiRemoteService, IRemoteHostConnection } from '../../../services/remote/common/multiRemoteService.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IWorkspaceEditingService } from '../../../services/workspaces/common/workspaceEditing.js';
+import { ITerminalService } from '../../terminal/browser/terminal.js';
+import { isHostInUse } from './multiRemoteWorkspace.js';
 
 /**
  * Connects to a remote host, lets the user pick folders on it and adds them to the workspace.
@@ -42,6 +45,8 @@ export class AddRemoteFolderToWorkspaceAction extends Action2 {
 		const workspaceEditingService = accessor.get(IWorkspaceEditingService);
 		const notificationService = accessor.get(INotificationService);
 		const labelService = accessor.get(ILabelService);
+		const contextService = accessor.get(IWorkspaceContextService);
+		const terminalService = accessor.get(ITerminalService);
 
 		if (!authority || !multiRemoteService.isEnabled) {
 			return;
@@ -66,9 +71,14 @@ export class AddRemoteFolderToWorkspaceAction extends Action2 {
 			defaultUri: URI.from({ scheme: Schemas.vscodeRemote, authority, path: connected.environment.userHome.path }),
 			availableFileSystems: [Schemas.vscodeRemote]
 		});
-		if (picked && picked.length > 0) {
-			// Name each root after its host, so that the same path on two hosts can be told apart
-			await workspaceEditingService.addFolders(picked.map(uri => ({ uri, name: localize('multiRemote.rootName', "{0} [{1}]", basename(uri), host) })));
+		if (!picked || picked.length === 0) {
+			// Nothing uses a host that was only connected for the dialog
+			if (!isHostInUse(authority, contextService, terminalService)) {
+				await multiRemoteService.disconnect(authority);
+			}
+			return;
 		}
+		// Name each root after its host, so that the same path on two hosts can be told apart
+		await workspaceEditingService.addFolders(picked.map(uri => ({ uri, name: localize('multiRemote.rootName', "{0} [{1}]", basename(uri), host) })));
 	}
 }

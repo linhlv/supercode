@@ -17,6 +17,7 @@ import { IEditorGroupsService } from '../../../../services/editor/common/editorG
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IMultiRemoteService, IRemoteHostConnection, IRemoteHostStatus, RemoteHostState } from '../../../../services/remote/common/multiRemoteService.js';
 import { IExplorerService } from '../../../files/browser/files.js';
+import { ITerminalInstance, ITerminalService } from '../../../terminal/browser/terminal.js';
 import { MultiRemoteWorkspaceContribution, ReconnectHostAction } from '../../browser/multiRemoteWorkspace.js';
 
 suite('MultiRemoteWorkspace', () => {
@@ -31,6 +32,8 @@ suite('MultiRemoteWorkspace', () => {
 	let provider: IDecorationsProvider | undefined;
 	let states: Map<string, RemoteHostState>;
 	let enabled: boolean;
+	let disconnectCalls: string[];
+	let terminalAuthorities: (string | undefined)[];
 
 	function folder(authority: string | undefined, path: string, index: number): IWorkspaceFolder {
 		const uri = authority ? URI.from({ scheme: Schemas.vscodeRemote, authority, path }) : URI.file(path);
@@ -43,7 +46,8 @@ suite('MultiRemoteWorkspace', () => {
 			onDidChangeHostState: stateEmitter.event,
 			getState: (authority: string) => states.get(authority.toLowerCase()),
 			getHosts: () => [],
-			connect: (authority: string) => { connectCalls.push(authority); return new Promise<IRemoteHostConnection>(() => { }); }
+			connect: (authority: string) => { connectCalls.push(authority); return new Promise<IRemoteHostConnection>(() => { }); },
+			disconnect: async (authority: string) => { disconnectCalls.push(authority); }
 		} as Partial<IMultiRemoteService> as IMultiRemoteService;
 		const contextService = {
 			getWorkspace: () => ({ folders }),
@@ -59,7 +63,8 @@ suite('MultiRemoteWorkspace', () => {
 			registerDecorationsProvider: (p: IDecorationsProvider): IDisposable => { provider = p; return toDisposable(() => { provider = undefined; }); }
 		} as Partial<IDecorationsService> as IDecorationsService;
 		const labelService = { getHostLabel: (_scheme: string, authority: string) => `SSH: ${authority.substring('ssh-remote+'.length)}@box` } as Partial<ILabelService> as ILabelService;
-		return store.add(new MultiRemoteWorkspaceContribution(multiRemoteService, contextService, configurationService, explorerService, editorGroupsService, editorService, labelService, decorationsService));
+		const terminalService = { get instances() { return terminalAuthorities.map(remoteAuthority => ({ remoteAuthority }) as ITerminalInstance); } } as Partial<ITerminalService> as ITerminalService;
+		return store.add(new MultiRemoteWorkspaceContribution(multiRemoteService, contextService, configurationService, explorerService, editorGroupsService, editorService, labelService, terminalService, decorationsService));
 	}
 
 	setup(() => {
@@ -72,6 +77,8 @@ suite('MultiRemoteWorkspace', () => {
 		states = new Map();
 		enabled = true;
 		folders = [];
+		disconnectCalls = [];
+		terminalAuthorities = [];
 	});
 
 	test('connects every remote root at startup without awaiting', () => {
@@ -98,6 +105,21 @@ suite('MultiRemoteWorkspace', () => {
 		const added = folder('ssh-remote+c', '/x', 0);
 		foldersEmitter.fire({ added: [added], removed: [], changed: [] });
 		assert.deepStrictEqual(connectCalls, ['ssh-remote+c']);
+	});
+
+	test('removing the last root of a host disconnects it unless it has terminals', () => {
+		const a1 = folder('ssh-remote+a', '/one', 0), a2 = folder('ssh-remote+A', '/two', 1), b = folder('ssh-remote+b', '/three', 2), c = folder('ssh-remote+c', '/four', 3);
+		folders = [a1, a2, b, c];
+		create();
+		terminalAuthorities = [undefined, 'SSH-REMOTE+C'];
+
+		folders = [a2];
+		foldersEmitter.fire({ added: [], removed: [a1, b, c], changed: [] });
+		const afterFirst = [...disconnectCalls];
+		folders = [];
+		foldersEmitter.fire({ added: [], removed: [a2], changed: [] });
+
+		assert.deepStrictEqual({ afterFirst, all: disconnectCalls }, { afterFirst: ['ssh-remote+b'], all: ['ssh-remote+b', 'ssh-remote+A'] });
 	});
 
 	test('reloads configuration only for the connected host\'s roots', () => {

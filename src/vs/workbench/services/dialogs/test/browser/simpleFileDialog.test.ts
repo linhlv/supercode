@@ -22,6 +22,7 @@ import { IAccessibilityService } from '../../../../../platform/accessibility/com
 import { TestAccessibilityService } from '../../../../../platform/accessibility/test/common/testAccessibilityService.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { IOpenDialogOptions } from '../../../../../platform/dialogs/common/dialogs.js';
+import { IMultiRemoteService } from '../../../remote/common/multiRemoteService.js';
 import { workbenchInstantiationService } from '../../../../test/browser/workbenchTestServices.js';
 import { SimpleFileDialog } from '../../browser/simpleFileDialog.js';
 
@@ -594,6 +595,31 @@ suite('SimpleFileDialog', () => {
 			separator: '/',
 			isWindows: false,
 		});
+	});
+
+	test('never connects an unconnected secondary host when opening', async () => {
+		const authority = 'ssh-remote+down';
+		const remoteRoot = URI.from({ scheme: Schemas.vscodeRemote, authority, path: '/' });
+		const calls: string[] = [];
+		const instantiationService = workbenchInstantiationService({ fileService: () => fileService }, disposables);
+		disposables.add(fileService.registerProvider(Schemas.vscodeRemote, disposables.add(new InMemoryFileSystemProvider())));
+		await fileService.createFolder(remoteRoot);
+		instantiationService.stub(IMultiRemoteService, new class extends mock<IMultiRemoteService>() {
+			override readonly isEnabled = true;
+			override isSecondary(a: string | undefined) { return !!a; }
+			override getConnected() { calls.push('getConnected'); return undefined; }
+			override connect(): never { calls.push('connect'); throw new Error('must not connect'); }
+			override getEnvironment(): never { calls.push('getEnvironment'); throw new Error('must not connect'); }
+		}());
+		const quickInputService = instantiationService.get(IQuickInputService);
+		const dialog = disposables.add(instantiationService.createInstance(SimpleFileDialog));
+		const result = dialog.showOpenDialog({ defaultUri: remoteRoot, availableFileSystems: [Schemas.vscodeRemote], canSelectFiles: false, canSelectFolders: true });
+		await timeout(0);
+		const picker = quickInputService.currentQuickInput as IQuickPick<IQuickPickItem>;
+		const opened = !!picker;
+		picker?.hide();
+		await result;
+		assert.deepStrictEqual({ opened, calls: calls.filter(c => c !== 'getConnected') }, { opened: true, calls: [] });
 	});
 
 	test('does not let a canceled slow folder update overwrite a newer folder', async () => {

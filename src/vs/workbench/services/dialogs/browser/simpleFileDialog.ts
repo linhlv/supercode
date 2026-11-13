@@ -324,17 +324,19 @@ export class SimpleFileDialog extends Disposable implements ISimpleFileDialog {
 		return this.remoteAgentEnvironment;
 	}
 
-	/** True when the dialog is scoped to an additional remote host of a local window (see {@link IMultiRemoteService}). */
-	private isScopedToSecondaryHost(): boolean {
-		return this.scheme === Schemas.vscodeRemote && this.multiRemoteService.isSecondary(this.scopedAuthority);
+	/** The environment of the additional remote host the dialog is scoped to, if it is connected (never connects). */
+	private getSecondaryHostEnvironment(): IRemoteAgentEnvironment | undefined {
+		if (this.scopedAuthority && this.scheme === Schemas.vscodeRemote && this.multiRemoteService.isSecondary(this.scopedAuthority)) {
+			return this.multiRemoteService.getConnected(this.scopedAuthority)?.environment;
+		}
+		return undefined;
 	}
 
-	protected async getUserHome(trueHome = false): Promise<URI> {
-		if (this.scopedAuthority && this.isScopedToSecondaryHost()) {
-			const environment = await this.multiRemoteService.getEnvironment(this.scopedAuthority);
-			if (environment) {
-				return URI.from({ scheme: this.scheme, authority: this.scopedAuthority, path: environment.userHome.path });
-			}
+	protected getUserHome(trueHome = false): Promise<URI> {
+		// Never starts a connection: an unconnected host falls through to the scoped fallback below.
+		const environment = this.getSecondaryHostEnvironment();
+		if (this.scopedAuthority && environment) {
+			return Promise.resolve(URI.from({ scheme: this.scheme, authority: this.scopedAuthority, path: environment.userHome.path }));
 		}
 		// When scoped to a custom authority, the platform userHome is not
 		// meaningful (it would return a local file:// path). Use the root
@@ -1108,13 +1110,11 @@ export class SimpleFileDialog extends Disposable implements ISimpleFileDialog {
 	}
 
 	private async resolvePathFormatting(): Promise<void> {
-		if (this.scopedAuthority && this.isScopedToSecondaryHost()) {
-			const environment = await this.multiRemoteService.getEnvironment(this.scopedAuthority);
-			if (environment) {
-				this.isWindows = environment.os === OperatingSystem.Windows;
-				this.separator = this.isWindows ? '\\' : '/';
-				return;
-			}
+		const environment = this.getSecondaryHostEnvironment();
+		if (environment) {
+			this.isWindows = environment.os === OperatingSystem.Windows;
+			this.separator = this.isWindows ? '\\' : '/';
+			return;
 		}
 		if (this.scopedAuthority) {
 			const resource = URI.from({ scheme: this.scheme, authority: this.scopedAuthority, path: '/' });

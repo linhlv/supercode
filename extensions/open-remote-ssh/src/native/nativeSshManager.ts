@@ -1,4 +1,5 @@
 import * as fs from 'fs/promises';
+import { buildNativeServerEnv } from './nativeSshArgs';
 import * as path from 'path';
 import * as cp from 'child_process';
 import { exists } from '../common/files';
@@ -45,9 +46,6 @@ export interface NativeSshManagerOptions {
     connection: NativeSshConnectionOptions;
     registry: NativeSshRegistry;
     serverScriptPath: string;
-    askpassPath: string;
-    askpassNodeScriptPath: string;
-    askpassSocketPath: string;
     logger: ILogger;
 }
 
@@ -509,15 +507,7 @@ export class NativeSshManager {
             registryFilePath: this.registry.filePath
         };
 
-        const envVars = {
-            DISPLAY: process.env.DISPLAY || '1',
-            ELECTRON_RUN_AS_NODE: '1',
-            SSH_ASKPASS: this.options.askpassPath,
-            SSH_ASKPASS_REQUIRE: 'force',
-            NATIVE_SSH_NODE_BIN: process.execPath,
-            NATIVE_SSH_ASKPASS_NODE_SCRIPT: this.options.askpassNodeScriptPath,
-            NATIVE_SSH_ASKPASS_SOCKET: this.options.askpassSocketPath,
-        };
+        const envVars = buildNativeServerEnv(process.env.DISPLAY);
         const child = cp.spawn(process.execPath, [serverScriptPath, JSON.stringify(serverConfig)], {
             detached: true,
             stdio: 'pipe',

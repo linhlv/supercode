@@ -5,7 +5,7 @@
 
 import * as assert from 'assert';
 import SSHDestination from '../ssh/sshDestination';
-import { buildNativeSshArgs } from '../native/nativeSshArgs';
+import { buildNativeSshArgs, buildNativeServerEnv, nativeRegistryKey } from '../native/nativeSshArgs';
 
 function pairs(args: string[]): string[][] {
 	const result: string[][] = [];
@@ -39,5 +39,16 @@ suite('native ssh args', () => {
 			'-l', 'me',
 			'devbox',
 		]);
+	});
+
+	test('server env cannot prompt through askpass', () => {
+		assert.deepStrictEqual(buildNativeServerEnv(undefined), { DISPLAY: '1', ELECTRON_RUN_AS_NODE: '1', SSH_ASKPASS_REQUIRE: 'never' });
+	});
+
+	test('registry key differs per user and port and is filesystem safe', () => {
+		const alice = nativeRegistryKey(SSHDestination.parse('alice@box'));
+		const bob = nativeRegistryKey(SSHDestination.parse('bob@box:2222'));
+
+		assert.deepStrictEqual({ differ: alice !== bob, safe: /^[0-9a-f]+$/.test(alice) && /^[0-9a-f]+$/.test(bob), stable: alice === nativeRegistryKey(SSHDestination.parse('alice@box')) }, { differ: true, safe: true, stable: true });
 	});
 });

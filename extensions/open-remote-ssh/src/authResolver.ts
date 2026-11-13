@@ -25,9 +25,9 @@ import { installCodeServer, ServerInstallError, findServerInstallPath } from './
 import { isWindows, RemotePlatform } from './common/platform';
 import { resolveNativeSshExecutable } from './native/nativeSshConnection';
 import { NativeSshConnectionOptions, NativeSshManager, NativeSshRegistry } from './native/nativeSshManager';
-import { AskPassServer } from './native/nativeSshAskpass';
-import { buildNativeSshArgs } from './native/nativeSshArgs';
+import { buildNativeSshArgs, nativeRegistryKey } from './native/nativeSshArgs';
 import { SessionRegistry } from './sessionRegistry';
+import { selectFoldersOfAuthority } from './envScope';
 
 const PASSWORD_RETRY_COUNT = 3;
 const PASSPHRASE_RETRY_COUNT = 3;
@@ -226,12 +226,14 @@ export class SSHSession implements vscode.Disposable {
 
     labelFormatterDisposable: vscode.Disposable | undefined;
     nativeSshKeepalive: vscode.Disposable | undefined;
+    terminalEnvDisposable: vscode.Disposable | undefined;
 
     nativeManager: NativeSshManager | undefined;
-    nativeAskpassServer: AskPassServer | undefined;
 
     dispose() {
         this.nativeSshKeepalive?.dispose();
+        this.terminalEnvDisposable?.dispose();
+        this.terminalEnvDisposable = undefined;
         disposeAll(this.tunnels);
         this.agentForwardSession?.close();
         this.agentForwardSession = undefined;
@@ -246,8 +248,6 @@ export class SSHSession implements vscode.Disposable {
 
         this.nativeManager?.dispose();
         this.nativeManager = undefined;
-        this.nativeAskpassServer?.dispose();
-        this.nativeAskpassServer = undefined;
     }
 }
 
@@ -353,7 +353,7 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
 
                 const marker = crypto.randomBytes(12).toString('hex');
                 const connection: NativeSshConnectionOptions = {
-                    authorityKey: destination.hostname,
+                    authorityKey: nativeRegistryKey(destination),
                     sshExecutable,
                     sshArgs,
                     label: marker,
@@ -362,9 +362,6 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
                 };
 
                 const registry = await NativeSshRegistry.forAuthority(this.context.globalStorageUri.fsPath, connection.authorityKey, packageJSON.version);
-                const askpassServer = await AskPassServer.create(this.logger);
-                session.nativeAskpassServer = askpassServer;
-
                 const manager = new NativeSshManager({
                     connection,
                     registry,
@@ -374,24 +371,6 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
                         'native',
                         'nativeSshServer.js'
                     ),
-                    askpassPath: isWindows
-                        ? `powershell.exe -NoProfile -NoLogo -ExecutionPolicy Bypass -File "${path.join(
-                            this.context.extensionPath,
-                            'dist',
-                            'native',
-                            'askpass.ps1')}"`
-                        : path.join(
-                            this.context.extensionPath,
-                            'dist',
-                            'native',
-                            'askpass.sh'),
-                    askpassNodeScriptPath: path.join(
-                        this.context.extensionPath,
-                        'dist',
-                        'native',
-                        'askpass-node.js',
-                    ),
-                    askpassSocketPath: askpassServer.socketPath,
                     logger: this.logger,
                 });
                 session.nativeManager = manager;
@@ -422,12 +401,7 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
                     }
                 }
 
-                this.context.environmentVariableCollection.persistent = false;
-                for (const [key, value] of Object.entries(envVariables)) {
-                    if (value) {
-                        this.context.environmentVariableCollection.replace(key, value);
-                    }
-                }
+                this.applyTerminalEnv(session, authority, envVariables);
 
                 vscode.commands.executeCommand('setContext', 'forwardedPortsViewEnabled', true);
 
@@ -640,12 +614,7 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
         );
 
         // Update terminal env variables
-        this.context.environmentVariableCollection.persistent = false;
-        for (const [key, value] of Object.entries(envVariables)) {
-            if (value) {
-                this.context.environmentVariableCollection.replace(key, value);
-            }
-        }
+        this.applyTerminalEnv(session, authority, envVariables);
 
         if (enableDynamicForwarding) {
             const socksPort = await findRandomPort();
@@ -677,6 +646,38 @@ export class RemoteSSHResolver implements vscode.RemoteAuthorityResolver, vscode
         const resolvedResult: vscode.ResolverResult = new vscode.ResolvedAuthority('127.0.0.1', tunnelConfig.localPort, installResult.connectionToken);
         resolvedResult.extensionHostEnv = envVariables;
         return resolvedResult;
+    }
+
+    /**
+     * Applies the host's terminal environment only to the terminals of this authority's
+     * workspace folders. The folders are added after the authority is resolved, so it is
+     * re-applied whenever the workspace folders change; the session's dispose clears it.
+     */
+    private applyTerminalEnv(session: SSHSession, authority: string, env: Record<string, string | null>) {
+        session.terminalEnvDisposable?.dispose();
+        const apply = () => {
+            const folders = vscode.workspace.workspaceFolders;
+            for (const index of selectFoldersOfAuthority(folders, authority)) {
+                const scoped = this.context.environmentVariableCollection.getScoped({ workspaceFolder: folders![index] });
+                scoped.persistent = false;
+                for (const [key, value] of Object.entries(env)) {
+                    if (value) {
+                        scoped.replace(key, value);
+                    }
+                }
+            }
+        };
+        const clear = () => {
+            for (const index of selectFoldersOfAuthority(vscode.workspace.workspaceFolders, authority)) {
+                const scoped = this.context.environmentVariableCollection.getScoped({ workspaceFolder: vscode.workspace.workspaceFolders![index] });
+                for (const key of Object.keys(env)) {
+                    scoped.delete(key);
+                }
+            }
+        };
+        apply();
+        const listener = vscode.workspace.onDidChangeWorkspaceFolders(apply);
+        session.terminalEnvDisposable = { dispose: () => { listener.dispose(); clear(); } };
     }
 
     private async openNativeTunnel(

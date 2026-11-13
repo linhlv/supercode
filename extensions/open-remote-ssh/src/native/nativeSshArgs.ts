@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { createHash } from 'crypto';
 import SSHDestination from '../ssh/sshDestination';
 
 /**
@@ -23,4 +24,25 @@ export function buildNativeSshArgs(dest: SSHDestination, extra: string[]): strin
 	}
 	args.push(dest.hostname);
 	return args;
+}
+
+/**
+ * Environment of the helper process that owns one host's `ssh` process. ssh must never
+ * ask for anything through an askpass program (also for ProxyJump/ProxyCommand children,
+ * which inherit this environment), so `SSH_ASKPASS` is not set and askpass use is disabled.
+ */
+export function buildNativeServerEnv(display: string | undefined): Record<string, string> {
+	return {
+		DISPLAY: display || '1',
+		ELECTRON_RUN_AS_NODE: '1',
+		SSH_ASKPASS_REQUIRE: 'never',
+	};
+}
+
+/**
+ * Filesystem-safe registry key of a destination. Derived from the full destination
+ * (user, host and port), so `alice@box` and `bob@box:2222` never share a running server.
+ */
+export function nativeRegistryKey(dest: SSHDestination): string {
+	return createHash('sha256').update(dest.toEncodedString()).digest('hex').substring(0, 24);
 }

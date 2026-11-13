@@ -214,6 +214,41 @@ suite('RemoteFileSystemRouter', () => {
 		});
 	});
 
+	test('a brief reconnect on the same connection keeps the client, fds and watches', async () => {
+		service.setConnected(A);
+		const router = create();
+		const fd = await router.open(uri(A), { create: false });
+		store.add(router.watch(uri(A), { recursive: false, excludes: [] }));
+		const client = clientOf(A);
+		const connection = service.getConnected(A)!.connection;
+
+		service.connected.delete(A);
+		service.states.set(A, RemoteHostState.Reconnecting);
+		service.emitter.fire({ authority: A, state: RemoteHostState.Reconnecting });
+		const code = await router.stat(uri(A)).then(() => undefined, e => toFileSystemProviderErrorCode(e));
+		const disposedWhileReconnecting = client.disposed;
+
+		service.setConnected(A, connection);
+		service.emitter.fire({ authority: A, state: RemoteHostState.Connected });
+		await router.read(fd, 0, new Uint8Array(1), 0, 1);
+
+		assert.deepStrictEqual({ code, disposedWhileReconnecting, clients: clients.length, calls: client.calls, watches: client.watches.length }, {
+			code: FileSystemProviderErrorCode.Unavailable,
+			disposedWhileReconnecting: false,
+			clients: 1,
+			calls: ['open', 'read 1'],
+			watches: 1
+		});
+	});
+
+	test('connect receives the authority exactly as written', async () => {
+		const router = create();
+
+		await assert.rejects(router.stat(uri('ssh-remote+DevBox', '/x')));
+
+		assert.deepStrictEqual(service.connectCalls, ['ssh-remote+DevBox']);
+	});
+
 	test('file change events from all hosts are forwarded', async () => {
 		service.setConnected(A);
 		service.setConnected(B);

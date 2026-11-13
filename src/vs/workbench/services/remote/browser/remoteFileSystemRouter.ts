@@ -12,7 +12,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { localize } from '../../../../nls.js';
 import { DiskFileSystemProviderClient } from '../../../../platform/files/common/diskFileSystemProviderClient.js';
 import { createFileSystemProviderError, FileSystemProviderCapabilities, FileSystemProviderErrorCode, FileType, IFileAtomicReadOptions, IFileChange, IFileDeleteOptions, IFileOpenOptions, IFileOverwriteOptions, IFileReadStreamOptions, IFileRealpathOptions, IFileSystemProviderWithFileAtomicReadCapability, IFileSystemProviderWithFileAtomicRenameCapability, IFileSystemProviderWithFileCloneCapability, IFileSystemProviderWithFileFolderCopyCapability, IFileSystemProviderWithFileReadStreamCapability, IFileSystemProviderWithFileReadWriteCapability, IFileSystemProviderWithOpenReadWriteCloseCapability, IFileWriteOptions, IStat, IWatchOptions } from '../../../../platform/files/common/files.js';
-import { IMultiRemoteService, IRemoteHostConnection } from '../common/multiRemoteService.js';
+import { IMultiRemoteService, IRemoteHostConnection, RemoteHostState } from '../common/multiRemoteService.js';
 import { RemoteFileSystemProviderClient } from '../common/remoteFileSystemProviderClient.js';
 
 interface IHostClient {
@@ -80,7 +80,7 @@ export class RemoteFileSystemRouter extends Disposable implements
 	) {
 		super();
 
-		this._register(this.multiRemoteService.onDidChangeHostState(status => this.syncHost(status.authority.toLowerCase())));
+		this._register(this.multiRemoteService.onDidChangeHostState(status => this.syncHost(status.authority)));
 		this._register(toDisposable(() => {
 			for (const key of [...this.clients.keys()]) {
 				this.dropClient(key);
@@ -94,38 +94,49 @@ export class RemoteFileSystemRouter extends Disposable implements
 		return createFileSystemProviderError(localize('hostNotConnected', "{0} is not connected yet.", this.getHostLabel(authority)), FileSystemProviderErrorCode.Unavailable);
 	}
 
-	/** Starts connecting a host that was never touched before. */
+	/** Starts connecting a host that was never touched before. The authority is passed on exactly as written. */
 	private connectIfUntouched(authority: string): void {
 		if (this.multiRemoteService.getState(authority) === undefined) {
 			this.multiRemoteService.connect(authority).catch(() => { /* surfaced through host state */ });
 		}
 	}
 
-	/** Makes the held client match the host's current connection and returns it, if connected. */
-	private syncHost(key: string): IHostClient | undefined {
-		const connected = this.multiRemoteService.getConnected(key);
-		const existing = this.clients.get(key);
+	/**
+	 * Makes the held client match the host's current connection and returns it, if connected.
+	 * While the host is reconnecting on the same connection, the client (with its file
+	 * descriptors and watchers) is kept so it keeps working once the connection is back.
+	 */
+	private syncHost(authority: string): IHostClient | undefined {
+		const key = authority.toLowerCase();
+		const connected = this.multiRemoteService.getConnected(authority);
+		let host = this.clients.get(key);
 
-		if (existing && existing.connection === connected?.connection) {
-			return existing;
-		}
-		if (existing) {
+		if (host && connected && host.connection !== connected.connection) {
 			this.dropClient(key);
+			host = undefined;
 		}
+
 		if (!connected) {
+			const state = this.multiRemoteService.getState(authority);
+			if (host && state !== RemoteHostState.Reconnecting && state !== RemoteHostState.Connecting) {
+				this.dropClient(key);
+			}
 			return undefined;
 		}
 
-		const store = new DisposableStore();
-		const client = store.add(this.createClient(connected));
-		store.add(client.onDidChangeFile(e => this._onDidChangeFile.fire(e)));
-		store.add(client.onDidWatchError(e => this._onDidWatchError.fire(e)));
-		const host: IHostClient = { connection: connected.connection, client, store, watchers: new Map() };
-		this.clients.set(key, host);
+		if (!host) {
+			const store = new DisposableStore();
+			const client = store.add(this.createClient(connected));
+			store.add(client.onDidChangeFile(e => this._onDidChangeFile.fire(e)));
+			store.add(client.onDidWatchError(e => this._onDidWatchError.fire(e)));
+			host = { connection: connected.connection, client, store, watchers: new Map() };
+			this.clients.set(key, host);
+		}
 
+		// Issue watches that are not yet active on this client
 		for (const [id, request] of this.watches) {
-			if (request.authority === key) {
-				host.watchers.set(id, client.watch(request.resource, request.opts));
+			if (request.authority === key && !host.watchers.has(id)) {
+				host.watchers.set(id, host.client.watch(request.resource, request.opts));
 			}
 		}
 
@@ -141,19 +152,18 @@ export class RemoteFileSystemRouter extends Disposable implements
 					this.fds.delete(fd);
 				}
 			}
-			// The connection is gone, so unwatch calls on it are skipped.
+			// The connection is gone or replaced, so unwatch calls on it are skipped.
 			host.store.dispose();
 		}
 	}
 
 	private getHost(resource: URI): IHostClient {
-		const key = resource.authority.toLowerCase();
-		const host = this.syncHost(key);
+		const host = this.syncHost(resource.authority);
 		if (host) {
 			return host;
 		}
 
-		this.connectIfUntouched(key);
+		this.connectIfUntouched(resource.authority);
 		throw this.unavailable(resource.authority);
 	}
 
@@ -281,12 +291,8 @@ export class RemoteFileSystemRouter extends Disposable implements
 
 		// Establishes the watcher right away when connected; otherwise it is
 		// established once the host connects (see `syncHost`).
-		const existing = this.clients.get(key);
-		const host = this.syncHost(key);
-		if (host && host === existing) {
-			host.watchers.set(id, host.client.watch(resource, opts));
-		} else if (!host) {
-			this.connectIfUntouched(key);
+		if (!this.syncHost(resource.authority)) {
+			this.connectIfUntouched(resource.authority);
 		}
 
 		return toDisposable(() => {

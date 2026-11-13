@@ -15,6 +15,7 @@ import { ServicesAccessor } from '../../../../platform/instantiation/common/inst
 import { ILabelService } from '../../../../platform/label/common/label.js';
 import { listErrorForeground } from '../../../../platform/theme/common/colorRegistry.js';
 import { IWorkspaceContextService, IWorkspaceFolder } from '../../../../platform/workspace/common/workspace.js';
+import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { RemoteNameContext, ResourceContextKey } from '../../../common/contextkeys.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IWorkbenchConfigurationService } from '../../../services/configuration/common/configuration.js';
@@ -57,6 +58,7 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 		@IEditorService private readonly editorService: IEditorService,
 		@ILabelService private readonly labelService: ILabelService,
 		@ITerminalService private readonly terminalService: ITerminalService,
+		@IWorkspaceTrustManagementService private readonly workspaceTrustManagementService: IWorkspaceTrustManagementService,
 		@IDecorationsService decorationsService: IDecorationsService
 	) {
 		super();
@@ -68,6 +70,12 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 		this._register(decorationsService.registerDecorationsProvider(this.createDecorationsProvider()));
 
 		this.connectHosts(this.contextService.getWorkspace().folders);
+		this._register(this.workspaceTrustManagementService.onDidChangeTrust(trusted => {
+			if (trusted) {
+				this.connectHosts(this.contextService.getWorkspace().folders);
+			}
+			this._onDidChangeDecorations.fire(this.contextService.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.vscodeRemote).map(folder => folder.uri));
+		}));
 		this._register(this.contextService.onDidChangeWorkspaceFolders(e => {
 			this.connectHosts(e.added);
 			this.disconnectUnusedHosts(e.removed);
@@ -86,7 +94,11 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 		return this.contextService.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.vscodeRemote && folder.uri.authority.toLowerCase() === key);
 	}
 
+	/** Connects the hosts of `folders` in the background. An untrusted workspace connects no host on its own. */
 	private connectHosts(folders: readonly IWorkspaceFolder[]): void {
+		if (!this.workspaceTrustManagementService.isWorkspaceTrusted()) {
+			return;
+		}
 		const seen = new Set<string>();
 		for (const folder of folders) {
 			const authority = folder.uri.authority;
@@ -157,6 +169,10 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 						};
 					case RemoteHostState.Disconnected:
 						return { letter: '–', tooltip: localize('multiRemote.disconnected', "{0} is disconnected", host), weight: 10 };
+					case undefined:
+						return this.workspaceTrustManagementService.isWorkspaceTrusted()
+							? undefined
+							: { letter: '–', tooltip: localize('multiRemote.notTrusted', "{0} is not connected because the workspace is not trusted.", host), weight: 10 };
 					default:
 						return undefined;
 				}

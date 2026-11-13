@@ -10,6 +10,7 @@ import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
+import { IWorkspaceTrustManagementService } from '../../../../../platform/workspace/common/workspaceTrust.js';
 import { IWorkspaceContextService, IWorkspaceFolder, IWorkspaceFoldersChangeEvent } from '../../../../../platform/workspace/common/workspace.js';
 import { IWorkbenchConfigurationService } from '../../../../services/configuration/common/configuration.js';
 import { IDecorationData, IDecorationsProvider, IDecorationsService } from '../../../../services/decorations/common/decorations.js';
@@ -34,6 +35,8 @@ suite('MultiRemoteWorkspace', () => {
 	let enabled: boolean;
 	let disconnectCalls: string[];
 	let terminalAuthorities: (string | undefined)[];
+	let trusted: boolean;
+	let trustEmitter: Emitter<boolean>;
 
 	function folder(authority: string | undefined, path: string, index: number): IWorkspaceFolder {
 		const uri = authority ? URI.from({ scheme: Schemas.vscodeRemote, authority, path }) : URI.file(path);
@@ -64,7 +67,8 @@ suite('MultiRemoteWorkspace', () => {
 		} as Partial<IDecorationsService> as IDecorationsService;
 		const labelService = { getHostLabel: (_scheme: string, authority: string) => `SSH: ${authority.substring('ssh-remote+'.length)}@box` } as Partial<ILabelService> as ILabelService;
 		const terminalService = { get instances() { return terminalAuthorities.map(remoteAuthority => ({ remoteAuthority }) as ITerminalInstance); } } as Partial<ITerminalService> as ITerminalService;
-		return store.add(new MultiRemoteWorkspaceContribution(multiRemoteService, contextService, configurationService, explorerService, editorGroupsService, editorService, labelService, terminalService, decorationsService));
+		const trustService = { isWorkspaceTrusted: () => trusted, onDidChangeTrust: trustEmitter.event } as Partial<IWorkspaceTrustManagementService> as IWorkspaceTrustManagementService;
+		return store.add(new MultiRemoteWorkspaceContribution(multiRemoteService, contextService, configurationService, explorerService, editorGroupsService, editorService, labelService, terminalService, trustService, decorationsService));
 	}
 
 	setup(() => {
@@ -79,12 +83,32 @@ suite('MultiRemoteWorkspace', () => {
 		folders = [];
 		disconnectCalls = [];
 		terminalAuthorities = [];
+		trusted = true;
+		trustEmitter = store.add(new Emitter<boolean>());
 	});
 
 	test('connects every remote root at startup without awaiting', () => {
 		folders = [folder(undefined, '/local', 0), folder('ssh-remote+a', '/one', 1), folder('ssh-remote+a', '/two', 2), folder('ssh-remote+b', '/three', 3)];
 		create();
 		assert.deepStrictEqual(connectCalls, ['ssh-remote+a', 'ssh-remote+b']);
+	});
+
+	test('an untrusted workspace connects no host until it is trusted', async () => {
+		trusted = false;
+		folders = [folder('ssh-remote+a', '/one', 0)];
+		create();
+		foldersEmitter.fire({ added: [folder('ssh-remote+b', '/two', 1)], removed: [], changed: [] });
+		const untrusted = [...connectCalls];
+		const decoration = await provider!.provideDecorations(folders[0].uri, undefined!) as IDecorationData;
+
+		trusted = true;
+		trustEmitter.fire(true);
+
+		assert.deepStrictEqual({ untrusted, decoration: { letter: decoration.letter, tooltip: decoration.tooltip }, trusted: connectCalls }, {
+			untrusted: [],
+			decoration: { letter: '–', tooltip: 'SSH: a@box is not connected because the workspace is not trusted.' },
+			trusted: ['ssh-remote+a']
+		});
 	});
 
 	test('local folders never trigger connect', () => {

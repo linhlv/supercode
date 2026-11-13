@@ -164,6 +164,17 @@ suite('RemoteFileSystemRouter', () => {
 		assert.deepStrictEqual(service.connectCalls, [A]);
 	});
 
+	test('a host that may not connect automatically is never connected by a file call or watch', async () => {
+		const allowed = [A];
+		const router = store.add(new RemoteFileSystemRouter(service, undefined, undefined, authority => allowed.includes(authority)));
+
+		const message = await router.stat(uri(B)).then(() => undefined, (e: Error) => e.message);
+		store.add(router.watch(uri(B), { recursive: false, excludes: [] }));
+		await assert.rejects(router.stat(uri(A)));
+
+		assert.deepStrictEqual({ message, connectCalls: service.connectCalls }, { message: `${B} is unavailable.`, connectCalls: [A] });
+	});
+
 	test('failed host fails fast without reconnecting', async () => {
 		service.states.set(A, RemoteHostState.Failed);
 		const router = create();

@@ -76,7 +76,9 @@ export class RemoteFileSystemRouter extends Disposable implements
 	constructor(
 		private readonly multiRemoteService: IMultiRemoteService,
 		private readonly createClient: (host: IRemoteHostConnection) => DiskFileSystemProviderClient = h => RemoteFileSystemProviderClient.create(h.environment, h.connection),
-		private readonly getHostLabel: (authority: string) => string = authority => authority
+		private readonly getHostLabel: (authority: string) => string = authority => authority,
+		/** Whether touching a resource of a never-touched host may connect it (e.g. the workspace is trusted and the host has a root). */
+		private readonly canAutoConnect: (authority: string) => boolean = () => true
 	) {
 		super();
 
@@ -98,9 +100,9 @@ export class RemoteFileSystemRouter extends Disposable implements
 		return createFileSystemProviderError(message, FileSystemProviderErrorCode.Unavailable);
 	}
 
-	/** Starts connecting a host that was never touched before. The authority is passed on exactly as written. */
+	/** Starts connecting a host that was never touched before, if allowed. The authority is passed on exactly as written. */
 	private connectIfUntouched(authority: string): void {
-		if (this.multiRemoteService.getState(authority) === undefined) {
+		if (this.multiRemoteService.getState(authority) === undefined && this.canAutoConnect(authority)) {
 			this.multiRemoteService.connect(authority).catch(() => { /* surfaced through host state */ });
 		}
 	}

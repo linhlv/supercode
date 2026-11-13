@@ -15,6 +15,7 @@ import SSHDestination from '../ssh/sshDestination';
  * block the window. `extra` (e.g. `-D <port>`, `-F <file>`) goes before the destination.
  */
 export function buildNativeSshArgs(dest: SSHDestination, extra: string[]): string[] {
+	assertSafeHostname(dest.hostname);
 	const args: string[] = ['-v', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', ...extra];
 	if (dest.port) {
 		args.push('-p', String(dest.port));
@@ -24,6 +25,17 @@ export function buildNativeSshArgs(dest: SSHDestination, extra: string[]): strin
 	}
 	args.push(dest.hostname);
 	return args;
+}
+
+/**
+ * Throws for a host name that `ssh` could read as an option (leading `-`, e.g. `-oProxyCommand=...`)
+ * or that contains whitespace or shell metacharacters. Host names come from remote authorities, so
+ * from workspace files and links, and end up on the ssh command line and in `%h` expansions.
+ */
+function assertSafeHostname(hostname: string): void {
+	if (!hostname || hostname.startsWith('-') || /[\s;&|`$<>()\\'"*?!{}#~^]/.test(hostname)) {
+		throw new Error(`Invalid SSH host name '${hostname}'`);
+	}
 }
 
 /**

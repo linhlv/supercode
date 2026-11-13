@@ -24,6 +24,8 @@ Behaviour
   `-o BatchMode=yes -o ConnectTimeout=15`. The `remote.SSH.connectTimeout` setting no longer applies to the native
   backend. `BatchMode` means ssh never prompts (password, passphrase, unknown host key): authentication must work
   with an agent or an unencrypted key, and the host must already be in `known_hosts`.
+- `buildNativeSshArgs` rejects host names that start with `-` (ssh would read them as an option, e.g.
+  `-oProxyCommand=...`) or contain whitespace or shell metacharacters; such an authority fails to resolve.
 - Native backend askpass removed: the `AskPassServer` is no longer created and the helper process env
   (`buildNativeServerEnv`) sets no `SSH_ASKPASS` and `SSH_ASKPASS_REQUIRE=never`, so ProxyJump/ProxyCommand child
   ssh processes cannot prompt either. Only the `native` backend is non-interactive; the opt-in `ssh2` backend

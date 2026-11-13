@@ -41,6 +41,22 @@ suite('native ssh args', () => {
 		]);
 	});
 
+	test('rejects host names that ssh could take for an option or a shell could expand', () => {
+		const verdict = (hostname: string) => {
+			try {
+				buildNativeSshArgs(new SSHDestination(hostname, 'me'), []);
+				return 'ok';
+			} catch {
+				return 'rejected';
+			}
+		};
+
+		assert.deepStrictEqual(
+			['devbox', 'my-host.example.com', 'box_1', '10.0.0.1', '-oProxyCommand=touch /tmp/x', 'box;rm -rf ~', 'a b', 'box\tx', '$(id)', '`id`', 'box|nc', 'box&', 'box>x', '-p'].map(h => [h, verdict(h)]),
+			[['devbox', 'ok'], ['my-host.example.com', 'ok'], ['box_1', 'ok'], ['10.0.0.1', 'ok'], ['-oProxyCommand=touch /tmp/x', 'rejected'], ['box;rm -rf ~', 'rejected'], ['a b', 'rejected'], ['box\tx', 'rejected'], ['$(id)', 'rejected'], ['`id`', 'rejected'], ['box|nc', 'rejected'], ['box&', 'rejected'], ['box>x', 'rejected'], ['-p', 'rejected']]
+		);
+	});
+
 	test('server env cannot prompt through askpass', () => {
 		assert.deepStrictEqual(buildNativeServerEnv(undefined), { DISPLAY: '1', ELECTRON_RUN_AS_NODE: '1', SSH_ASKPASS_REQUIRE: 'never' });
 	});

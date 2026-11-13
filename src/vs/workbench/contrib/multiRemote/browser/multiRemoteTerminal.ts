@@ -15,6 +15,7 @@ import { Registry } from '../../../../platform/registry/common/platform.js';
 import { ITerminalBackendRegistry, TerminalExtensions } from '../../../../platform/terminal/common/terminal.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
+import { RemoteNameContext } from '../../../common/contextkeys.js';
 import { IMultiRemoteService, RemoteHostState } from '../../../services/remote/common/multiRemoteService.js';
 import { IRemoteAgentConnection } from '../../../services/remote/common/remoteAgentService.js';
 import { RemoteTerminalBackend } from '../../terminal/browser/remoteTerminalBackend.js';
@@ -96,8 +97,8 @@ registerAction2(class NewTerminalOnRemoteHostAction extends Action2 {
 			title: localize2('newTerminalOnRemoteHost', "New Terminal on Remote Host…"),
 			f1: true,
 			category: localize2('terminalCategory', "Terminal"),
-			precondition: undefined,
-			menu: { id: MenuId.TerminalNewDropdownContext, group: '3_remote' }
+			precondition: RemoteNameContext.isEqualTo(''),
+			menu: { id: MenuId.TerminalNewDropdownContext, group: '3_remote', when: RemoteNameContext.isEqualTo('') }
 		});
 	}
 

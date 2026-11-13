@@ -287,6 +287,23 @@ suite('Workbench - TerminalProcessManager', () => {
 		});
 	});
 
+	test('secondary host terminals are not persisted while local ones are', async () => {
+		await manager.createProcess({}, 80, 24, false);
+		const local = { shouldPersist: manager.shouldPersist, requested: terminalInstanceService.createdProcesses.at(-1)!.shouldPersist };
+
+		instantiationService.stub(IMultiRemoteService, {
+			isSecondary: (authority: string | undefined) => authority === 'ssh-remote+b',
+			getEnvironment: async () => upcastPartial<IRemoteAgentEnvironment>({ os: OperatingSystem.Linux, userHome: URI.file('/home/b') })
+		} as Partial<IMultiRemoteService> as IMultiRemoteService);
+		const secondary = store.add(instantiationService.createInstance(TerminalProcessManager, 5,
+			URI.from({ scheme: Schemas.vscodeRemote, authority: 'ssh-remote+b', path: '/srv' }), undefined, undefined));
+		await secondary.createProcess({}, 80, 24, false);
+		deepStrictEqual({ local, secondary: { shouldPersist: secondary.shouldPersist, requested: terminalInstanceService.createdProcesses.at(-1)!.shouldPersist } }, {
+			local: { shouldPersist: true, requested: true },
+			secondary: { shouldPersist: false, requested: false }
+		});
+	});
+
 	test('does not accumulate environment variable collection listeners when relaunching', async () => {
 		const changeCollectionsEmitter = (environmentVariableService as unknown as { _onDidChangeCollections: Emitter<unknown> })._onDidChangeCollections;
 		const initialListenerCount = listenerCount(changeCollectionsEmitter);

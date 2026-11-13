@@ -132,7 +132,8 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 	private _cwdWorkspaceFolder: IWorkspaceFolder | undefined;
 
 	get persistentProcessId(): number | undefined { return this._process?.id; }
-	get shouldPersist(): boolean { return !!this.reconnectionProperties || (this._process ? this._process.shouldPersist : false); }
+	// Additional hosts' terminals are never persisted: their pty ids would collide with the local pty host's layout info
+	get shouldPersist(): boolean { return !this._multiRemoteService.isSecondary(this.remoteAuthority) && (!!this.reconnectionProperties || (this._process ? this._process.shouldPersist : false)); }
 	get hasWrittenData(): boolean { return this._hasWrittenData; }
 	get hasChildProcesses(): boolean { return this._hasChildProcesses; }
 	get reconnectionProperties(): IReconnectionProperties | undefined { return this._shellLaunchConfig?.attachPersistentProcess?.reconnectionProperties || this._shellLaunchConfig?.reconnectionProperties || undefined; }
@@ -290,7 +291,7 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 				this.userHome = remoteEnv.userHome.path;
 				this.os = remoteEnv.os;
 
-				const shouldPersist = ((this._configurationService.getValue(TaskSettingId.Reconnection) && shellLaunchConfig.reconnectionProperties) || !shellLaunchConfig.isFeatureTerminal) && this._terminalConfigurationService.config.enablePersistentSessions && !shellLaunchConfig.isTransient;
+				const shouldPersist = ((this._configurationService.getValue(TaskSettingId.Reconnection) && shellLaunchConfig.reconnectionProperties) || !shellLaunchConfig.isFeatureTerminal) && this._terminalConfigurationService.config.enablePersistentSessions && !shellLaunchConfig.isTransient && !this._multiRemoteService.isSecondary(this.remoteAuthority);
 				if (shellLaunchConfig.attachPersistentProcess) {
 					const result = await backend.attachToProcess(shellLaunchConfig.attachPersistentProcess.id);
 					if (result) {
@@ -562,7 +563,7 @@ export class TerminalProcessManager extends Disposable implements ITerminalProce
 			workspaceFolder: this._cwdWorkspaceFolder,
 			isScreenReaderOptimized: this._accessibilityService.isScreenReaderOptimized()
 		};
-		const shouldPersist = ((this._configurationService.getValue(TaskSettingId.Reconnection) && shellLaunchConfig.reconnectionProperties) || !shellLaunchConfig.isFeatureTerminal) && this._terminalConfigurationService.config.enablePersistentSessions && !shellLaunchConfig.isTransient;
+		const shouldPersist = ((this._configurationService.getValue(TaskSettingId.Reconnection) && shellLaunchConfig.reconnectionProperties) || !shellLaunchConfig.isFeatureTerminal) && this._terminalConfigurationService.config.enablePersistentSessions && !shellLaunchConfig.isTransient && !this._multiRemoteService.isSecondary(this.remoteAuthority);
 		return await backend.createProcess(shellLaunchConfig, initialCwd, cols, rows, this._terminalConfigurationService.config.unicodeVersion, env, options, shouldPersist);
 	}
 

@@ -10,8 +10,8 @@ import { Emitter, Event } from '../../../../base/common/event.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import { ISocket, PersistentProtocol, SocketCloseEvent, SocketDiagnosticsEventType } from '../../../../base/parts/ipc/common/ipc.net.js';
 import { NullLogService } from '../../../log/common/log.js';
-import { WebSocketRemoteConnection } from '../../common/remoteAuthorityResolver.js';
-import { ConnectionType, IConnectionOptions, PersistentConnection, PersistentConnectionEventType } from '../../common/remoteAgentConnection.js';
+import { RemoteAuthorityResolverError, RemoteAuthorityResolverErrorCode, WebSocketRemoteConnection } from '../../common/remoteAuthorityResolver.js';
+import { ConnectionType, IConnectionOptions, ManagementPersistentConnection, PersistentConnection, PersistentConnectionEventType } from '../../common/remoteAgentConnection.js';
 import { RemoteSocketFactoryService } from '../../common/remoteSocketFactoryService.js';
 import { IMessage, ISignService } from '../../../sign/common/sign.js';
 
@@ -180,6 +180,39 @@ suite('RemoteAgentConnection', () => {
 		} finally {
 			disposables.dispose();
 			clock.restore();
+		}
+	});
+
+	test('a management connection whose failure is not fatal fails alone', async () => {
+		const disposables = new DisposableStore();
+		try {
+			const options = (getAddress: IConnectionOptions['addressProvider']['getAddress']): IConnectionOptions => ({
+				commit: undefined,
+				quality: undefined,
+				addressProvider: { getAddress },
+				remoteSocketFactoryService: new RemoteSocketFactoryService(),
+				signService: new TestSignService(),
+				logService: new NullLogService(),
+				ipcLogger: null,
+			});
+			const reachable = options(async () => ({ connectTo: new WebSocketRemoteConnection('localhost', 0), connectionToken: undefined }));
+			const unreachable = options(async () => { throw new RemoteAuthorityResolverError('host is gone', RemoteAuthorityResolverErrorCode.NotAvailable); });
+
+			const otherHost = disposables.add(new TestPersistentConnection(reachable, disposables.add(new PersistentProtocol({ socket: new TestSocket(), sendKeepAlive: false }))));
+			const failingSocket = new TestSocket();
+			const failingHost = disposables.add(new ManagementPersistentConnection(unreachable, 'test+b', 'renderer', 'failing-token', disposables.add(new PersistentProtocol({ socket: failingSocket, sendKeepAlive: false })), /* reconnectionFailureIsFatal */ false));
+			const failed = Event.toPromise(Event.filter(failingHost.onDidStateChange, e => e.type === PersistentConnectionEventType.ReconnectionPermanentFailure));
+
+			failingSocket.fireClose();
+			await failed;
+			const laterHost = disposables.add(new TestPersistentConnection(reachable, disposables.add(new PersistentProtocol({ socket: new TestSocket(), sendKeepAlive: false }))));
+
+			assert.deepStrictEqual(
+				{ failingHost: failingHost.isConnected, otherHost: otherHost.isConnected, laterHost: laterHost.isConnected },
+				{ failingHost: false, otherHost: true, laterHost: true }
+			);
+		} finally {
+			disposables.dispose();
 		}
 	});
 

@@ -411,13 +411,18 @@ export interface IAddressProvider<T extends RemoteConnection = RemoteConnection>
 	getAddress(): Promise<IAddress<T>>;
 }
 
-export async function connectRemoteAgentManagement(options: IConnectionOptions, remoteAuthority: string, clientId: string): Promise<ManagementPersistentConnection> {
+/**
+ * @param failureIsFatal Whether failing to connect or reconnect puts every persistent connection of the window
+ * into permanent failure. Connections to additional hosts pass `false`, so that one host failing leaves the others alone.
+ */
+export async function connectRemoteAgentManagement(options: IConnectionOptions, remoteAuthority: string, clientId: string, failureIsFatal = true): Promise<ManagementPersistentConnection> {
 	return createInitialConnection(
 		options,
 		async (simpleOptions) => {
 			const { protocol } = await doConnectRemoteAgentManagement(simpleOptions, CancellationToken.None);
-			return new ManagementPersistentConnection(options, remoteAuthority, clientId, simpleOptions.reconnectionToken, protocol);
-		}
+			return new ManagementPersistentConnection(options, remoteAuthority, clientId, simpleOptions.reconnectionToken, protocol, failureIsFatal);
+		},
+		failureIsFatal
 	);
 }
 
@@ -434,7 +439,7 @@ export async function connectRemoteAgentExtensionHost(options: IConnectionOption
 /**
  * Will attempt to connect 5 times. If it fails 5 consecutive times, it will give up.
  */
-async function createInitialConnection<T extends PersistentConnection, O extends RemoteConnection>(options: IConnectionOptions<O>, connectionFactory: (simpleOptions: ISimpleConnectionOptions<O>) => Promise<T>): Promise<T> {
+async function createInitialConnection<T extends PersistentConnection, O extends RemoteConnection>(options: IConnectionOptions<O>, connectionFactory: (simpleOptions: ISimpleConnectionOptions<O>) => Promise<T>, failureIsFatal = true): Promise<T> {
 	const MAX_ATTEMPTS = 5;
 
 	for (let attempt = 1; ; attempt++) {
@@ -450,7 +455,9 @@ async function createInitialConnection<T extends PersistentConnection, O extends
 			} else {
 				options.logService.error(`[remote-connection][attempt ${attempt}]  An error occurred in initial connection! It will be treated as a permanent error. Error:`);
 				options.logService.error(err);
-				PersistentConnection.triggerPermanentFailure(0, 0, RemoteAuthorityResolverError.isHandled(err));
+				if (failureIsFatal) {
+					PersistentConnection.triggerPermanentFailure(0, 0, RemoteAuthorityResolverError.isHandled(err));
+				}
 				throw err;
 			}
 		}
@@ -769,8 +776,8 @@ export class ManagementPersistentConnection extends PersistentConnection {
 
 	public readonly client: Client<RemoteAgentConnectionContext>;
 
-	constructor(options: IConnectionOptions, remoteAuthority: string, clientId: string, reconnectionToken: string, protocol: PersistentProtocol) {
-		super(ConnectionType.Management, options, reconnectionToken, protocol, /*reconnectionFailureIsFatal*/true);
+	constructor(options: IConnectionOptions, remoteAuthority: string, clientId: string, reconnectionToken: string, protocol: PersistentProtocol, reconnectionFailureIsFatal = true) {
+		super(ConnectionType.Management, options, reconnectionToken, protocol, reconnectionFailureIsFatal);
 		this.client = this._register(new Client<RemoteAgentConnectionContext>(protocol, {
 			remoteAuthority: remoteAuthority,
 			clientId: clientId

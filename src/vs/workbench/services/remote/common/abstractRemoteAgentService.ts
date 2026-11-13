@@ -171,7 +171,9 @@ export class RemoteAgentConnection extends Disposable implements IRemoteAgentCon
 		private readonly _remoteSocketFactoryService: IRemoteSocketFactoryService,
 		private readonly _remoteAuthorityResolverService: IRemoteAuthorityResolverService,
 		private readonly _signService: ISignService,
-		private readonly _logService: ILogService
+		private readonly _logService: ILogService,
+		/** Whether this connection failing puts every connection of the window into permanent failure. */
+		private readonly _failureIsFatal = true
 	) {
 		super();
 		this.remoteAuthority = remoteAuthority;
@@ -245,7 +247,7 @@ export class RemoteAgentConnection extends Disposable implements IRemoteAgentCon
 		let connection: ManagementPersistentConnection;
 		const start = Date.now();
 		try {
-			connection = this._register(await connectRemoteAgentManagement(options, this.remoteAuthority, `renderer`));
+			connection = this._register(await connectRemoteAgentManagement(options, this.remoteAuthority, `renderer`, this._failureIsFatal));
 			this._managementConnection = connection;
 		} finally {
 			this._initialConnectionMs = Date.now() - start;

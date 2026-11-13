@@ -191,9 +191,9 @@ export class MultiRemoteService extends Disposable implements IMultiRemoteServic
 		return (await this.connect(authority!)).environment;
 	}
 
-	/** Test seam: creates the (lazy) connection object for a host. */
+	/** Test seam: creates the (lazy) connection object for a host. A host failing must not fail the other hosts. */
 	protected _createConnection(authority: string): IRemoteAgentConnection {
-		return new RemoteAgentConnection(authority, this._productService.commit, this._productService.quality, this._remoteSocketFactoryService, this._remoteAuthorityResolverService, this._signService, this._logService);
+		return new RemoteAgentConnection(authority, this._productService.commit, this._productService.quality, this._remoteSocketFactoryService, this._remoteAuthorityResolverService, this._signService, this._logService, /* failureIsFatal */ false);
 	}
 
 	/** Test seam: fetches the remote environment over the given connection. */

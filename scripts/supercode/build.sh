@@ -18,8 +18,11 @@
 #      linux-x64/arm64, Alpine (musl) for the alpine targets;
 #   2. the gulp task vscode-reh-<target>-min packages the server in a glibc container of the
 #      target's arch, with the dependencies of step 1 as remote/node_modules;
-#   3. pty.node and watcher.node in the tarball are checked with `file` to be ELF binaries of the
-#      target's arch; otherwise the tarball is deleted and the build fails.
+#   3. pty.node and watcher.node in the tarball (and node, for Alpine) are checked with `file` to be
+#      ELF binaries of the target's arch, linked against musl for Alpine and not for glibc; otherwise
+#      the tarball is deleted and the build fails.
+# For Alpine, step 1 also hands over the container's musl node: the gulp task would otherwise take it
+# from a `docker run` of the node Alpine image, and the containers have no docker.
 # The containers build from `git archive` of the commit, inside their own file system or the
 # Docker volumes supercode-reh-builder-amd64/-arm64 (which cache the repository install; remove them
 # with `docker volume rm` to reclaim the space). The host's node_modules folders are not touched.
@@ -104,17 +107,25 @@ build_image() {
   run docker build -q "${args[@]}" "$DOCKER_DIR"
 }
 
-# Fails, and deletes the tarball, unless every native module in it is a Linux binary matching $2
+# Fails, and deletes the tarball, unless every native module in it (and, for Alpine, its node) is a
+# Linux binary matching $2 for the libc $3: musl for alpine (the node binary's interpreter is
+# /lib/ld-musl-*, shared objects need libc.musl-*), glibc otherwise (nothing linked against musl).
 verify_package() {
-  local tarball="$1" pattern="$2"
-  echo "+ verify $tarball: ${NATIVE_MODULES[*]} match '$pattern'"
+  local tarball="$1" pattern="$2" libc="$3" target="$4"
+  local checks=("${NATIVE_MODULES[@]}")
+  [[ "$libc" == "alpine" ]] && checks+=(node)
+  echo "+ verify $tarball: ${checks[*]} match '$pattern', $libc"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     return 0
   fi
-  local tmp entries entry info name status=0
+  local tmp entries entry info name musl status=0
   tmp="$(mktemp -d)"
-  for name in "${NATIVE_MODULES[@]}"; do
-    entries="$(tar -tzf "$tarball" | grep "/$name\$" || true)"
+  for name in "${checks[@]}"; do
+    if [[ "$name" == "node" ]]; then
+      entries="$(tar -tzf "$tarball" | grep -x "$target/node" || true)"
+    else
+      entries="$(tar -tzf "$tarball" | grep "/$name\$" || true)"
+    fi
     if [[ -z "$entries" ]]; then
       echo "Error: $tarball contains no $name." >&2
       status=1
@@ -124,21 +135,39 @@ verify_package() {
     tar -xzf "$tarball" -C "$tmp" $entries
     while IFS= read -r entry; do
       info="$(file -b "$tmp/$entry")"
-      if [[ "$info" =~ $pattern ]]; then
-        echo "  ok   $entry: $info"
-      else
-        echo "  FAIL $entry: $info" >&2
+      musl=0
+      if [[ "$info" == *"/lib/ld-musl"* ]] || grep -aq 'libc\.musl-' "$tmp/$entry"; then
+        musl=1
+      fi
+      if [[ ! "$info" =~ $pattern ]]; then
+        echo "  FAIL $entry (not $pattern): $info" >&2
         status=1
+      elif [[ "$libc" == "alpine" && "$musl" -eq 0 ]]; then
+        echo "  FAIL $entry (not linked against musl): $info" >&2
+        status=1
+      elif [[ "$libc" != "alpine" && "$musl" -eq 1 ]]; then
+        echo "  FAIL $entry (linked against musl): $info" >&2
+        status=1
+      else
+        echo "  ok   $entry ($libc): $info"
       fi
     done <<< "$entries"
   done
   rm -rf "$tmp"
   if [[ "$status" -ne 0 ]]; then
     rm -f "$tarball"
-    echo "Error: $tarball has native modules that are not Linux binaries of its arch; deleted it." >&2
+    echo "Error: $tarball has binaries that are not Linux $libc binaries of its arch; deleted it." >&2
     exit 1
   fi
 }
+
+# Intermediate files (source archive, dependencies, Alpine node) never outlive a run, failed or not
+cleanup() {
+  if [[ "$DRY_RUN" -eq 0 ]]; then
+    rm -rf "$WORK_DIR"
+  fi
+}
+trap cleanup EXIT
 
 if [[ "$DRY_RUN" -eq 0 ]]; then
   if ! docker info >/dev/null 2>&1; then
@@ -186,8 +215,8 @@ for entry in "${SERVER_TARGETS[@]}"; do
     -v "$CONTAINER_SCRIPT:/reh-container.sh:ro" \
     "$(image_tag builder "$platform")" bash /reh-container.sh package "$target" "$COMMIT"
 
-  verify_package "$PACKAGES_DIR/$target.tar.gz" "$pattern"
-  run rm -f "$WORK_DIR/$target-remote-deps.tgz"
+  verify_package "$PACKAGES_DIR/$target.tar.gz" "$pattern" "$libc" "$target"
+  run rm -f "$WORK_DIR/$target-remote-deps.tgz" "$WORK_DIR/$target-node" "$WORK_DIR/$target-node.version"
   echo "  server -> $PACKAGES_DIR/$target.tar.gz"
 done
 

@@ -14,7 +14,12 @@ import * as crypto from 'crypto';
 import { downloadAndUnzipVSCodeServer } from './download';
 import { terminateProcess } from './util/processes';
 
-let extHostProcess: cp.ChildProcess | undefined;
+/** The running server of each resolved authority, so that several authorities can be resolved in one window. */
+const serverProcesses = new Map<string, cp.ChildProcess>();
+/** Authorities whose server was killed with `vscode-testresolver.killServer`; they no longer resolve. */
+const killedAuthorities = new Set<string>();
+/** The authority whose server uses the data folder itself. */
+let dataFolderAuthority: string | undefined;
 const enum CharCode {
 	Backspace = 8,
 	LineFeed = 10
@@ -94,6 +99,9 @@ export function activate(context: vscode.ExtensionContext) {
 		if (connectionPaused) {
 			throw vscode.RemoteAuthorityResolverError.TemporarilyNotAvailable('Not available right now');
 		}
+		if (killedAuthorities.has(authority)) {
+			throw vscode.RemoteAuthorityResolverError.NotAvailable(`The server of ${authority} was killed`, true);
+		}
 		const connectionToken = String(crypto.randomInt(0xffffffffff));
 		const wslDistribution = authority.startsWith('wsl+') ? authority.substring('wsl+'.length) : undefined;
 
@@ -161,7 +169,10 @@ export function activate(context: vscode.ExtensionContext) {
 			const { updateUrl, commit, quality, serverDataFolderName, serverApplicationName, dataFolderName } = getProductConfiguration();
 			const commandArgs = ['--host=127.0.0.1', '--port=0', '--disable-telemetry', '--disable-experiments', '--use-host-proxy', '--accept-server-license-terms', '--force-disable-user-env'];
 			const env = getNewEnv();
-			const remoteDataDir = process.env['TESTRESOLVER_DATA_FOLDER'] || path.join(os.homedir(), `${serverDataFolderName || dataFolderName}-testresolver`);
+			const baseDataDir = process.env['TESTRESOLVER_DATA_FOLDER'] || path.join(os.homedir(), `${serverDataFolderName || dataFolderName}-testresolver`);
+			// The first authority uses the data folder; every other authority gets a folder of its own in it
+			dataFolderAuthority ??= authority;
+			const remoteDataDir = dataFolderAuthority === authority ? baseDataDir : path.join(baseDataDir, 'authorities', authority.replace(/[^\w.-]/g, '_'));
 			const logsDir = process.env['TESTRESOLVER_LOGS_FOLDER'];
 			// The WSL server command sets the Linux data and log directories.
 			if (logsDir && !wslDistribution) {
@@ -209,10 +220,11 @@ export function activate(context: vscode.ExtensionContext) {
 				env[agentHostBridgeConnectionTokenEnvironmentVariable] = agentHostBridgeToken;
 			}
 
+			let serverProcess: cp.ChildProcess;
 			if (wslDistribution) {
 				const wsl = path.join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'wsl.exe');
 				outputChannel.appendLine(`Launching server in WSL ${wslDistribution}: ${commandArgs.join(' ')}`);
-				extHostProcess = cp.spawn(wsl, ['--distribution', wslDistribution, '--exec', 'sh', '-c', `${process.env[wslServerCommandEnvironmentVariable]} "$@"`, 'sh', ...commandArgs], { env });
+				serverProcess = cp.spawn(wsl, ['--distribution', wslDistribution, '--exec', 'sh', '-c', `${process.env[wslServerCommandEnvironmentVariable]} "$@"`, 'sh', ...commandArgs], { env });
 			} else if (!commit) { // dev mode
 				const serverCommand = process.platform === 'win32' ? 'code-server.bat' : 'code-server.sh';
 				const vscodePath = path.resolve(path.join(context.extensionPath, '..', '..'));
@@ -222,7 +234,7 @@ export function activate(context: vscode.ExtensionContext) {
 				const shell = (process.platform === 'win32');
 				// Skip prelaunch to avoid redownloading electron while it may be in use
 				env['VSCODE_SKIP_PRELAUNCH'] = '1';
-				extHostProcess = cp.spawn(serverCommandPath, commandArgs, { env, cwd: vscodePath, shell });
+				serverProcess = cp.spawn(serverCommandPath, commandArgs, { env, cwd: vscodePath, shell });
 			} else {
 				const extensionToInstall = process.env['TESTRESOLVER_INSTALL_BUILTIN_EXTENSION'];
 				if (extensionToInstall) {
@@ -232,7 +244,7 @@ export function activate(context: vscode.ExtensionContext) {
 				const serverCommand = `${serverApplicationName}${process.platform === 'win32' ? '.cmd' : ''}`;
 				let serverLocation = env['VSCODE_REMOTE_SERVER_PATH']; // support environment variable to specify location of server on disk
 				if (!serverLocation) {
-					const serverBin = path.join(remoteDataDir, 'bin');
+					const serverBin = path.join(baseDataDir, 'bin');
 					progress.report({ message: 'Installing VSCode Server' });
 					serverLocation = await downloadAndUnzipVSCodeServer(updateUrl, commit, quality, serverBin, m => outputChannel.appendLine(m));
 				}
@@ -240,28 +252,34 @@ export function activate(context: vscode.ExtensionContext) {
 				outputChannel.appendLine(`Using server build at ${serverLocation}`);
 				outputChannel.appendLine(`Server arguments ${commandArgs.join(' ')}`);
 				const shell = (process.platform === 'win32');
-				extHostProcess = cp.spawn(path.join(serverLocation, 'bin', serverCommand), commandArgs, { env, cwd: serverLocation, shell });
+				serverProcess = cp.spawn(path.join(serverLocation, 'bin', serverCommand), commandArgs, { env, cwd: serverLocation, shell });
 			}
-			extHostProcess.stdout!.on('data', (data: Buffer) => processOutput(data.toString()));
-			extHostProcess.stderr!.on('data', (data: Buffer) => processOutput(data.toString()));
-			extHostProcess.on('error', (error: Error) => {
+			serverProcesses.set(authority, serverProcess);
+			const forgetServerProcess = () => {
+				if (serverProcesses.get(authority) === serverProcess) {
+					serverProcesses.delete(authority);
+				}
+			};
+			serverProcess.stdout!.on('data', (data: Buffer) => processOutput(data.toString()));
+			serverProcess.stderr!.on('data', (data: Buffer) => processOutput(data.toString()));
+			serverProcess.on('error', (error: Error) => {
 				processError(`server failed with error:\n${error.message}`);
-				extHostProcess = undefined;
+				forgetServerProcess();
 			});
-			extHostProcess.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
+			serverProcess.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
 				// Logged separately from 'close' so we capture the signal (if any)
 				// that terminated the server. A non-null signal indicates the
 				// server was killed externally rather than exiting on its own.
 				outputChannel.appendLine(`[${new Date().toISOString()}] server process exited (code: ${code}, signal: ${signal}).`);
 			});
-			extHostProcess.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+			serverProcess.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
 				processError(`server closed unexpectedly.\nError code: ${code}, signal: ${signal}`);
-				extHostProcess = undefined;
+				forgetServerProcess();
 			});
 			context.subscriptions.push({
 				dispose: () => {
-					if (extHostProcess) {
-						terminateProcess(extHostProcess, context.extensionPath);
+					if (serverProcesses.get(authority) === serverProcess) {
+						terminateProcess(serverProcess, context.extensionPath);
 					}
 				}
 			});
@@ -436,8 +454,8 @@ export function activate(context: vscode.ExtensionContext) {
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('vscode-testresolver.killServerAndTriggerHandledError', () => {
 		authorityResolverDisposable.dispose();
-		if (extHostProcess) {
-			terminateProcess(extHostProcess, context.extensionPath);
+		for (const serverProcess of serverProcesses.values()) {
+			terminateProcess(serverProcess, context.extensionPath);
 		}
 		vscode.workspace.registerRemoteAuthorityResolver('test', {
 			async resolve(_authority: string): Promise<vscode.ResolvedAuthority> {
@@ -447,6 +465,16 @@ export function activate(context: vscode.ExtensionContext) {
 				throw vscode.RemoteAuthorityResolverError.NotAvailable('Intentional Error', true);
 			}
 		});
+	}));
+	context.subscriptions.push(vscode.commands.registerCommand('vscode-testresolver.killServer', async (authority: string) => {
+		// Simulates a host that went away: its server stops and the authority no longer resolves
+		killedAuthorities.add(authority);
+		const serverProcess = serverProcesses.get(authority);
+		if (serverProcess) {
+			const exited = new Promise<void>(resolve => serverProcess.once('exit', () => resolve()));
+			terminateProcess(serverProcess, context.extensionPath);
+			await exited;
+		}
 	}));
 	context.subscriptions.push(vscode.commands.registerCommand('vscode-testresolver.showLog', () => {
 		if (outputChannel) {

@@ -18,6 +18,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../platfo
 import { ISerializedTerminalCommand } from '../../../../platform/terminal/common/capabilities/capabilities.js';
 import { IPtyHostLatencyMeasurement, IShellLaunchConfig, IShellLaunchConfigDto, ITerminalBackend, ITerminalBackendRegistry, ITerminalChildProcess, ITerminalEnvironment, ITerminalLogService, ITerminalProcessOptions, ITerminalProfile, ITerminalsLayoutInfo, ITerminalsLayoutInfoById, ProcessPropertyType, TerminalExtensions, TerminalIcon, TerminalSettingId, TitleEventSource, type IProcessPropertyMap } from '../../../../platform/terminal/common/terminal.js';
 import { IProcessDetails } from '../../../../platform/terminal/common/terminalProcess.js';
+import { formatMessageForTerminal } from '../../../../platform/terminal/common/terminalStrings.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { BaseTerminalBackend } from './baseTerminalBackend.js';
@@ -124,6 +125,22 @@ export class RemoteTerminalBackend extends BaseTerminalBackend implements ITermi
 		}));
 
 		this._onPtyHostConnected.fire();
+	}
+
+	/**
+	 * Ends every terminal of this backend because its host is gone (failed or disconnected): each one
+	 * shows `message` and exits, instead of waiting forever for a connection that will not come back.
+	 * Returns how many terminals were ended.
+	 */
+	handleHostUnavailable(message: string): number {
+		const ptys = [...this._ptys.values()];
+		this._ptys.clear();
+		for (const pty of ptys) {
+			pty.handleData(formatMessageForTerminal(message, { loudFormatting: true }));
+			pty.handleExit(undefined);
+			pty.dispose();
+		}
+		return ptys.length;
 	}
 
 	async requestDetachInstance(workspaceId: string, instanceId: number): Promise<IProcessDetails | undefined> {

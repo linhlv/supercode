@@ -7,6 +7,8 @@ import assert from 'assert';
 import { Emitter } from '../../../../../base/common/event.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
+import { ILabelService } from '../../../../../platform/label/common/label.js';
+import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { Registry } from '../../../../../platform/registry/common/platform.js';
 import { ITerminalBackend, ITerminalBackendRegistry, TerminalExtensions } from '../../../../../platform/terminal/common/terminal.js';
 import { IMultiRemoteService, IRemoteHostConnection, IRemoteHostStatus, RemoteHostState } from '../../../../services/remote/common/multiRemoteService.js';
@@ -19,13 +21,14 @@ const AUTHORITY = 'ssh-remote+b';
 suite('MultiRemoteTerminal', () => {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
-	interface IFakeBackend { readonly id: number; readyCalls: number; disposed: boolean; remoteAuthority: string }
+	interface IFakeBackend { readonly id: number; readyCalls: number; disposed: boolean; remoteAuthority: string; unavailableMessages: string[]; terminals: number }
 
 	let stateEmitter: Emitter<IRemoteHostStatus>;
 	let connections: Map<string, IRemoteAgentConnection>;
 	let backends: IFakeBackend[];
 	let registeredAtNotify: (IFakeBackend | undefined)[];
 	let enabled: boolean;
+	let notifications: string[];
 
 	const registry = () => Registry.as<ITerminalBackendRegistry>(TerminalExtensions.Backend);
 	const current = () => registry().getTerminalBackend(AUTHORITY) as unknown as IFakeBackend | undefined;
@@ -50,7 +53,13 @@ suite('MultiRemoteTerminal', () => {
 				if (ctor.name !== 'RemoteTerminalBackend') {
 					return {}; // the channel client
 				}
-				const backend: IFakeBackend = { id: backends.length, readyCalls: 0, disposed: false, remoteAuthority: authority };
+				const backend: IFakeBackend = { id: backends.length, readyCalls: 0, disposed: false, remoteAuthority: authority, unavailableMessages: [], terminals: 1 };
+				(backend as unknown as { handleHostUnavailable(message: string): number }).handleHostUnavailable = message => {
+					backend.unavailableMessages.push(message);
+					const closed = backend.terminals;
+					backend.terminals = 0;
+					return closed;
+				};
 				(backend as unknown as { setReady(): void }).setReady = () => { backend.readyCalls++; };
 				(backend as unknown as { dispose(): void }).dispose = () => { backend.disposed = true; };
 				backends.push(backend);
@@ -62,7 +71,9 @@ suite('MultiRemoteTerminal', () => {
 				registeredAtNotify.push(registry().getTerminalBackend(backend.remoteAuthority) as unknown as IFakeBackend | undefined);
 			}
 		} as Partial<ITerminalInstanceService> as ITerminalInstanceService;
-		return store.add(new MultiRemoteTerminalContribution(multiRemoteService, instantiationService, terminalInstanceService));
+		const labelService = { getHostLabel: () => 'SSH: b@box' } as Partial<ILabelService> as ILabelService;
+		const notificationService = { warn: (message: string) => { notifications.push(message); } } as Partial<INotificationService> as INotificationService;
+		return store.add(new MultiRemoteTerminalContribution(multiRemoteService, instantiationService, terminalInstanceService, labelService, notificationService));
 	}
 
 	setup(() => {
@@ -71,6 +82,7 @@ suite('MultiRemoteTerminal', () => {
 		backends = [];
 		registeredAtNotify = [];
 		enabled = true;
+		notifications = [];
 	});
 
 	teardown(() => {
@@ -107,6 +119,22 @@ suite('MultiRemoteTerminal', () => {
 		const second = current();
 		fire(RemoteHostState.Failed);
 		assert.deepStrictEqual({ registered: current(), disposed: second?.disposed }, { registered: undefined, disposed: true });
+	});
+
+	test('a failed or disconnected host ends its terminals with a message naming the host', () => {
+		create();
+		connections.set(AUTHORITY, newConnection());
+		fire(RemoteHostState.Connected);
+		fire(RemoteHostState.Failed);
+		connections.set(AUTHORITY, newConnection());
+		fire(RemoteHostState.Connected);
+		backends[1].terminals = 0;
+		fire(RemoteHostState.Disconnected);
+
+		assert.deepStrictEqual({ messages: backends.map(b => b.unavailableMessages), notifications }, {
+			messages: [['The connection to SSH: b@box was lost.'], ['The connection to SSH: b@box was lost.']],
+			notifications: ['SSH: b@box is unavailable. Its terminals were closed.']
+		});
 	});
 
 	test('keeps the backend while reconnecting', () => {

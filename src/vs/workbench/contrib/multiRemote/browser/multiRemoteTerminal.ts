@@ -10,6 +10,7 @@ import { localize, localize2 } from '../../../../nls.js';
 import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 import { ITerminalBackendRegistry, TerminalExtensions } from '../../../../platform/terminal/common/terminal.js';
@@ -28,13 +29,15 @@ export class MultiRemoteTerminalContribution extends Disposable implements IWork
 	static readonly ID = 'workbench.contrib.multiRemoteTerminal';
 
 	/** Keyed by lowercased authority; remembers the connection each backend was built on. */
-	private readonly _backends = this._register(new DisposableMap<string, { dispose(): void }>());
+	private readonly _backends = this._register(new DisposableMap<string, { dispose(): void; handleHostUnavailable(message: string): number }>());
 	private readonly _connections = new Map<string, IRemoteAgentConnection>();
 
 	constructor(
 		@IMultiRemoteService private readonly _multiRemoteService: IMultiRemoteService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
-		@ITerminalInstanceService private readonly _terminalInstanceService: ITerminalInstanceService
+		@ITerminalInstanceService private readonly _terminalInstanceService: ITerminalInstanceService,
+		@ILabelService private readonly _labelService: ILabelService,
+		@INotificationService private readonly _notificationService: INotificationService
 	) {
 		super();
 
@@ -49,6 +52,7 @@ export class MultiRemoteTerminalContribution extends Disposable implements IWork
 					break;
 				case RemoteHostState.Failed:
 				case RemoteHostState.Disconnected:
+					this._endTerminals(status.authority);
 					this._removeBackend(status.authority);
 					break;
 				// Reconnecting keeps the backend: the same persistent connection resumes live terminals.
@@ -77,9 +81,25 @@ export class MultiRemoteTerminalContribution extends Disposable implements IWork
 		const registry = Registry.as<ITerminalBackendRegistry>(TerminalExtensions.Backend);
 		registry.registerTerminalBackend(backend);
 		this._connections.set(key, connected.connection);
-		this._backends.set(key, { dispose: () => { registry.unregisterTerminalBackend(authority); backend.dispose(); } });
+		this._backends.set(key, {
+			handleHostUnavailable: message => backend.handleHostUnavailable(message),
+			dispose: () => { registry.unregisterTerminalBackend(authority); backend.dispose(); }
+		});
 		this._terminalInstanceService.didRegisterBackend(backend);
 		backend.setReady();
+	}
+
+	/** Ends the terminals of a host that failed or was disconnected, so they do not freeze silently. */
+	private _endTerminals(authority: string): void {
+		const backend = this._backends.get(authority.toLowerCase());
+		if (!backend) {
+			return;
+		}
+		const host = this._labelService.getHostLabel(Schemas.vscodeRemote, authority) || authority;
+		const closed = backend.handleHostUnavailable(localize('multiRemote.hostLost', "The connection to {0} was lost.", host));
+		if (closed > 0) {
+			this._notificationService.warn(localize('multiRemote.terminalsClosed', "{0} is unavailable. Its terminals were closed.", host));
+		}
 	}
 
 	private _removeBackend(authority: string): void {

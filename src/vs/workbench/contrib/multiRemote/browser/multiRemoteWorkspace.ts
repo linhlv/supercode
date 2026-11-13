@@ -15,7 +15,7 @@ import { ServicesAccessor } from '../../../../platform/instantiation/common/inst
 import { ILabelService } from '../../../../platform/label/common/label.js';
 import { listErrorForeground } from '../../../../platform/theme/common/colorRegistry.js';
 import { IWorkspaceContextService, IWorkspaceFolder } from '../../../../platform/workspace/common/workspace.js';
-import { ResourceContextKey } from '../../../common/contextkeys.js';
+import { RemoteNameContext, ResourceContextKey } from '../../../common/contextkeys.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IWorkbenchConfigurationService } from '../../../services/configuration/common/configuration.js';
 import { IDecorationData, IDecorationsProvider, IDecorationsService } from '../../../services/decorations/common/decorations.js';
@@ -148,7 +148,7 @@ export class ReconnectHostAction extends Action2 {
 				id: MenuId.ExplorerContext,
 				group: '2_workspace',
 				order: 100,
-				when: ContextKeyExpr.and(ExplorerRootContext, ResourceContextKey.Scheme.isEqualTo(Schemas.vscodeRemote))
+				when: ContextKeyExpr.and(RemoteNameContext.isEqualTo(''), ExplorerRootContext, ResourceContextKey.Scheme.isEqualTo(Schemas.vscodeRemote))
 			}
 		});
 	}

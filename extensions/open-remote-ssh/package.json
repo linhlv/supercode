@@ -375,7 +375,8 @@
 					"when": "false"
 				},
 				{
-					"command": "remote-ssh.addFolderToWorkspace"
+					"command": "remote-ssh.addFolderToWorkspace",
+					"when": "remoteName == ''"
 				}
 			],
 			"view/title": [
@@ -396,7 +397,7 @@
 				},
 				{
 					"command": "remote-ssh.addFolderToWorkspace",
-					"when": "view == workbench.explorer.fileView",
+					"when": "view == workbench.explorer.fileView && remoteName == ''",
 					"group": "navigation"
 				}
 			],

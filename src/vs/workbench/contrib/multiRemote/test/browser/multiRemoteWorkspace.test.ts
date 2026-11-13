@@ -17,7 +17,7 @@ import { IEditorGroupsService } from '../../../../services/editor/common/editorG
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IMultiRemoteService, IRemoteHostConnection, IRemoteHostStatus, RemoteHostState } from '../../../../services/remote/common/multiRemoteService.js';
 import { IExplorerService } from '../../../files/browser/files.js';
-import { MultiRemoteWorkspaceContribution } from '../../browser/multiRemoteWorkspace.js';
+import { MultiRemoteWorkspaceContribution, ReconnectHostAction } from '../../browser/multiRemoteWorkspace.js';
 
 suite('MultiRemoteWorkspace', () => {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
@@ -116,5 +116,11 @@ suite('MultiRemoteWorkspace', () => {
 		const other = await provider!.provideDecorations(folders[1].uri, undefined!);
 		const child = await provider!.provideDecorations(URI.joinPath(folders[0].uri, 'sub'), undefined!);
 		assert.deepStrictEqual({ letter: decoration.letter, tooltip: decoration.tooltip, other, child }, { letter: '!', tooltip: 'SSH: a@box: Permission denied', other: undefined, child: undefined });
+	});
+
+	test('Reconnect Host is only offered in local windows', () => {
+		const menu = new ReconnectHostAction().desc.menu;
+		const when = (Array.isArray(menu) ? menu[0] : menu)?.when?.serialize();
+		assert.ok(when?.includes(`remoteName == ''`), when);
 	});
 });

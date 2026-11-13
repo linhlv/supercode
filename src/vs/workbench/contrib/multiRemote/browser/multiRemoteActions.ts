@@ -43,7 +43,7 @@ export class AddRemoteFolderToWorkspaceAction extends Action2 {
 		const notificationService = accessor.get(INotificationService);
 		const labelService = accessor.get(ILabelService);
 
-		if (!authority) {
+		if (!authority || !multiRemoteService.isEnabled) {
 			return;
 		}
 		const host = labelService.getHostLabel(Schemas.vscodeRemote, authority) || authority;

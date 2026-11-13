@@ -35,11 +35,14 @@ suite('MultiRemoteActions', () => {
 	let added: { uri: URI; name?: string }[][];
 	let errors: string[];
 	let hostLabel: string;
+	let enabled: boolean;
+	let connectCalls: number;
 
 	function accessor(): ServicesAccessor {
 		const services = new Map<unknown, unknown>([
 			[IMultiRemoteService, {
-				connect: () => connectResult
+				isEnabled: enabled,
+				connect: () => { connectCalls++; return connectResult; }
 			} as Partial<IMultiRemoteService>],
 			[IProgressService, { withProgress: (_options: unknown, task: () => Promise<unknown>) => task() } as Partial<IProgressService>],
 			[IFileDialogService, { showOpenDialog: async (options: IOpenDialogOptions) => { dialogCalls.push(options); return dialogResult; } } as Partial<IFileDialogService>],
@@ -65,6 +68,8 @@ suite('MultiRemoteActions', () => {
 		added = [];
 		errors = [];
 		hostLabel = 'SSH: alice@box';
+		enabled = true;
+		connectCalls = 0;
 	});
 
 	test('adds picked folders from the host\'s home', async () => {
@@ -87,6 +92,13 @@ suite('MultiRemoteActions', () => {
 		dialogResult = undefined;
 		await new AddRemoteFolderToWorkspaceAction().run(accessor(), AUTHORITY);
 		assert.deepStrictEqual({ dialogs: dialogCalls.length, added }, { dialogs: 1, added: [] });
+	});
+
+	test('does nothing in a window where multi-remote is disabled', async () => {
+		enabled = false;
+		dialogResult = [URI.from({ scheme: 'vscode-remote', authority: AUTHORITY, path: '/home/a/x' })];
+		await new AddRemoteFolderToWorkspaceAction().run(accessor(), AUTHORITY);
+		assert.deepStrictEqual({ connectCalls, dialogs: dialogCalls.length, added }, { connectCalls: 0, dialogs: 0, added: [] });
 	});
 
 	test('connection failure reports and adds nothing', async () => {

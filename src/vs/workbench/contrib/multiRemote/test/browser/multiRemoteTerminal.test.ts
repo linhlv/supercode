@@ -6,13 +6,13 @@
 import assert from 'assert';
 import { Emitter } from '../../../../../base/common/event.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+import { IInstantiationService, ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { Registry } from '../../../../../platform/registry/common/platform.js';
 import { ITerminalBackend, ITerminalBackendRegistry, TerminalExtensions } from '../../../../../platform/terminal/common/terminal.js';
 import { IMultiRemoteService, IRemoteHostConnection, IRemoteHostStatus, RemoteHostState } from '../../../../services/remote/common/multiRemoteService.js';
 import { IRemoteAgentConnection } from '../../../../services/remote/common/remoteAgentService.js';
-import { ITerminalInstanceService } from '../../../terminal/browser/terminal.js';
-import { MultiRemoteTerminalContribution } from '../../browser/multiRemoteTerminal.js';
+import { ITerminalInstanceService, ITerminalService } from '../../../terminal/browser/terminal.js';
+import { MultiRemoteTerminalContribution, NewTerminalOnRemoteHostAction } from '../../browser/multiRemoteTerminal.js';
 
 const AUTHORITY = 'ssh-remote+b';
 
@@ -134,5 +134,18 @@ suite('MultiRemoteTerminal', () => {
 		connections.set(AUTHORITY, newConnection());
 		fire(RemoteHostState.Connected);
 		assert.strictEqual(current(), undefined);
+	});
+
+	test('New Terminal on Remote Host does nothing for a host when multi-remote is disabled', async () => {
+		const calls: string[] = [];
+		const services = new Map<unknown, unknown>([
+			[IMultiRemoteService, { isEnabled: false, getEnvironment: async () => { calls.push('getEnvironment'); return null; } } as Partial<IMultiRemoteService>],
+			[ITerminalService, { createTerminal: async () => { calls.push('createTerminal'); return undefined!; } } as Partial<ITerminalService>],
+		]);
+		const accessor = { get: (id: unknown) => services.get(id) } as unknown as ServicesAccessor;
+
+		await new NewTerminalOnRemoteHostAction().run(accessor, AUTHORITY);
+
+		assert.deepStrictEqual(calls, []);
 	});
 });

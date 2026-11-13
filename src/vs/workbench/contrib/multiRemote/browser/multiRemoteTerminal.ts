@@ -89,7 +89,8 @@ export class MultiRemoteTerminalContribution extends Disposable implements IWork
 	}
 }
 
-registerAction2(class NewTerminalOnRemoteHostAction extends Action2 {
+/** Opens a terminal on a connected additional host, picked by the user or passed as `authority`. */
+export class NewTerminalOnRemoteHostAction extends Action2 {
 
 	constructor() {
 		super({
@@ -110,6 +111,9 @@ registerAction2(class NewTerminalOnRemoteHostAction extends Action2 {
 		const terminalService = accessor.get(ITerminalService);
 
 		let authority = typeof authorityArg === 'string' ? authorityArg : undefined;
+		if (authority !== undefined && !multiRemoteService.isEnabled) {
+			return;
+		}
 		if (authority === undefined) {
 			const hosts = multiRemoteService.getHosts().filter(host => host.state === RemoteHostState.Connected);
 			if (!multiRemoteService.isEnabled || hosts.length === 0) {
@@ -143,4 +147,6 @@ registerAction2(class NewTerminalOnRemoteHostAction extends Action2 {
 		await terminalService.revealActiveTerminal();
 		instance.focus();
 	}
-});
+}
+
+registerAction2(NewTerminalOnRemoteHostAction);

@@ -48,7 +48,8 @@ Behaviour
   first additional host of a local window, whose "Retry"/"Close Remote" act on the whole local window. Additional
   hosts now just throw the resolver error.
 - New command `remote-ssh.addFolderToWorkspace` ("Add SSH Folder to Workspace...", command palette and
-  `view/title` of the Explorer) that runs the core `workbench.action.addRemoteFolderToWorkspace`.
+  `view/title` of the Explorer, both only in local windows: `remoteName == ''`) that runs the core
+  `workbench.action.addRemoteFolderToWorkspace`.
 - Server packages (fork-specific): the native backend no longer downloads the server for Linux remotes. Before the
   install script runs, and only when `<dataDir>/bin/<commit>/bin/<serverApplicationName>` is not there yet, it probes
   `uname -s`, `uname -m` and musl (`ldd --version`), picks the tarball with `pickServerPackage`

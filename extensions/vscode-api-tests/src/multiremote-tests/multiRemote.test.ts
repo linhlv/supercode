@@ -120,8 +120,9 @@ suite('multi-remote window', () => {
 			withTimeout(vscode.workspace.fs.writeFile(vscode.Uri.joinPath(rootB, 'x.txt'), encoder.encode('x')), 5_000, 'write to the dead host'),
 			(error: unknown) => {
 				assert.ok(error instanceof vscode.FileSystemError, `expected a FileSystemError, got ${error}`);
-				// Core FileService wraps provider errors, so the API code is `Unknown`; the router's Unavailable error is in the message
-				assert.ok(error.message.includes('is not connected yet.'), error.message);
+				// Core FileService wraps provider errors, so the API code is `Unknown`; the router's Unavailable error is in the message.
+				// It depends on how far the host got: reconnecting ("is not connected yet.") or failed ("is unavailable.").
+				assert.ok(/ is (not connected yet|unavailable)\.\)?$/.test(error.message), error.message);
 				return true;
 			}
 		);

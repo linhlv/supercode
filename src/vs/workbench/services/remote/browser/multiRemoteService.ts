@@ -99,6 +99,9 @@ export class MultiRemoteService extends Disposable implements IMultiRemoteServic
 			entry.disposables.add(connection);
 			this._monitor(entry, connection, authority);
 			const environment = await this._fetchEnvironment(connection);
+			if (typeof environment.reconnectionGraceTime === 'number') {
+				connection.updateGraceTime(environment.reconnectionGraceTime);
+			}
 			if (this._hosts.get(authority.toLowerCase()) !== entry || entry.disposables.isDisposed) {
 				throw new Error(`Connection to ${authority} was cancelled`);
 			}

@@ -28,10 +28,15 @@ class FakeConnection extends mock<IRemoteAgentConnection>() {
 	override readonly onDidStateChange = this.stateEmitter.event;
 	override readonly onReconnecting = this.reconnectingEmitter.event;
 	endCalls = 0;
+	graceTimes: number[] = [];
 	disposed = false;
 
 	constructor(override readonly remoteAuthority: string) {
 		super();
+	}
+
+	override updateGraceTime(graceTime: number): void {
+		this.graceTimes.push(graceTime);
 	}
 
 	override async end(): Promise<void> {
@@ -55,7 +60,7 @@ class TestMultiRemoteService extends MultiRemoteService {
 	}
 
 	protected override async _fetchEnvironment(): Promise<IRemoteAgentEnvironment> {
-		return { userHome: URI.file('/home/a') } as IRemoteAgentEnvironment;
+		return { userHome: URI.file('/home/a'), reconnectionGraceTime: 1234 } as IRemoteAgentEnvironment;
 	}
 }
 
@@ -98,7 +103,7 @@ suite('MultiRemoteService', () => {
 	test('connect goes connecting → connected and returns the environment', async () => {
 		const { service, states } = create();
 		const result = await service.connect('ssh-remote+a');
-		assert.deepStrictEqual({ states, home: result.environment.userHome.path }, { states: ['connecting', 'connected'], home: '/home/a' });
+		assert.deepStrictEqual({ states, home: result.environment.userHome.path, graceTimes: service.created[0].graceTimes }, { states: ['connecting', 'connected'], home: '/home/a', graceTimes: [1234] });
 	});
 
 	test('concurrent connect calls share one connection', async () => {

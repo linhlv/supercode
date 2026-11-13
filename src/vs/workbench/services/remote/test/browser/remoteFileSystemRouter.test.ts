@@ -4,13 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { DeferredPromise } from '../../../../../base/common/async.js';
+import { CancellationError } from '../../../../../base/common/errors.js';
 import { Emitter } from '../../../../../base/common/event.js';
 import { IDisposable } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { mock } from '../../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { DiskFileSystemProviderClient } from '../../../../../platform/files/common/diskFileSystemProviderClient.js';
-import { FileChangeType, FileSystemProviderCapabilities, FileSystemProviderErrorCode, IFileChange, IStat, IWatchOptions, FileType, toFileSystemProviderErrorCode } from '../../../../../platform/files/common/files.js';
+import { createFileSystemProviderError, FileChangeType, FileSystemProviderCapabilities, FileSystemProviderErrorCode, IFileChange, IStat, IWatchOptions, FileType, toFileSystemProviderErrorCode } from '../../../../../platform/files/common/files.js';
 import { IRemoteAgentEnvironment } from '../../../../../platform/remote/common/remoteAgentEnvironment.js';
 import { RemoteFileSystemRouter } from '../../browser/remoteFileSystemRouter.js';
 import { IMultiRemoteService, IRemoteHostConnection, IRemoteHostStatus, RemoteHostState } from '../../common/multiRemoteService.js';
@@ -23,6 +25,8 @@ class FakeClient extends mock<DiskFileSystemProviderClient>() {
 	override readonly onDidChangeFile = this.changeEmitter.event;
 	override readonly onDidWatchError = new Emitter<string>().event;
 	disposed = false;
+	/** When set, `readFile` settles with this promise. */
+	readFileResult: Promise<Uint8Array> | undefined;
 
 	constructor(private readonly fd = 1) {
 		super();
@@ -34,7 +38,7 @@ class FakeClient extends mock<DiskFileSystemProviderClient>() {
 	}
 	override async readFile(resource: URI): Promise<Uint8Array> {
 		this.calls.push(`readFile ${resource.path}`);
-		return new Uint8Array();
+		return this.readFileResult ?? new Uint8Array();
 	}
 	override async open(): Promise<number> {
 		this.calls.push('open');
@@ -166,6 +170,31 @@ suite('RemoteFileSystemRouter', () => {
 
 		await assert.rejects(router.readFile(uri(A)), (e: Error) => toFileSystemProviderErrorCode(e) === FileSystemProviderErrorCode.Unavailable);
 		assert.deepStrictEqual(service.connectCalls, []);
+	});
+
+	test('a call cut off by the host failing fails with Unavailable naming the host', async () => {
+		service.setConnected(A);
+		service.setConnected(B);
+		const router = create();
+		await router.stat(uri(A));
+		await router.stat(uri(B));
+		const inFlightA = new DeferredPromise<Uint8Array>();
+		clientOf(A).readFileResult = inFlightA.p;
+		const errorOf = (promise: Promise<unknown>) => promise.then(() => undefined, (e: Error) => ({ code: toFileSystemProviderErrorCode(e), namesHost: e.message.includes(A) }));
+
+		const readingA = errorOf(router.readFile(uri(A)));
+		service.connected.delete(A);
+		service.states.set(A, RemoteHostState.Failed);
+		service.emitter.fire({ authority: A, state: RemoteHostState.Failed });
+		inFlightA.error(new CancellationError()); // what the closed connection does to pending requests
+		const a = await readingA;
+		clientOf(B).readFileResult = Promise.reject(createFileSystemProviderError('missing', FileSystemProviderErrorCode.FileNotFound));
+		const b = await errorOf(router.readFile(uri(B)));
+
+		assert.deepStrictEqual({ a, b }, {
+			a: { code: FileSystemProviderErrorCode.Unavailable, namesHost: true },
+			b: { code: FileSystemProviderErrorCode.FileNotFound, namesHost: false }
+		});
 	});
 
 	test('rename and copy across hosts fail without touching either host', async () => {

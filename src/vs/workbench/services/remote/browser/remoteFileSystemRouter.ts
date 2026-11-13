@@ -167,8 +167,20 @@ export class RemoteFileSystemRouter extends Disposable implements
 		throw this.unavailable(resource.authority);
 	}
 
-	private getClient(resource: URI): DiskFileSystemProviderClient {
-		return this.getHost(resource).client;
+	/**
+	 * Runs a call on the client of the resource's host. A call that the host dropping
+	 * cut off fails like a call to a host that is not connected.
+	 */
+	private async callHost<T>(resource: URI, call: (client: DiskFileSystemProviderClient) => Promise<T>): Promise<T> {
+		const host = this.getHost(resource);
+		try {
+			return await call(host.client);
+		} catch (error) {
+			if (this.clients.get(resource.authority.toLowerCase()) !== host) {
+				throw this.unavailable(resource.authority);
+			}
+			throw error;
+		}
 	}
 
 	private checkSameHost(resource: URI, target: URI): void {
@@ -190,15 +202,15 @@ export class RemoteFileSystemRouter extends Disposable implements
 	//#region File Metadata Resolving
 
 	async stat(resource: URI): Promise<IStat> {
-		return this.getClient(resource).stat(resource);
+		return this.callHost(resource, client => client.stat(resource));
 	}
 
 	async realpath(resource: URI, options?: IFileRealpathOptions): Promise<string> {
-		return this.getClient(resource).realpath(resource, options);
+		return this.callHost(resource, client => client.realpath(resource, options));
 	}
 
 	async readdir(resource: URI): Promise<[string, FileType][]> {
-		return this.getClient(resource).readdir(resource);
+		return this.callHost(resource, client => client.readdir(resource));
 	}
 
 	//#endregion
@@ -206,12 +218,12 @@ export class RemoteFileSystemRouter extends Disposable implements
 	//#region File Reading/Writing
 
 	async readFile(resource: URI, opts?: IFileAtomicReadOptions): Promise<Uint8Array> {
-		return this.getClient(resource).readFile(resource, opts);
+		return this.callHost(resource, client => client.readFile(resource, opts));
 	}
 
 	readFileStream(resource: URI, opts: IFileReadStreamOptions, token: CancellationToken): ReadableStreamEvents<Uint8Array> {
 		try {
-			return this.getClient(resource).readFileStream(resource, opts, token);
+			return this.getHost(resource).client.readFileStream(resource, opts, token);
 		} catch (error) {
 			const stream = newWriteableStream<Uint8Array>(data => data[0]);
 			stream.error(error);
@@ -221,12 +233,12 @@ export class RemoteFileSystemRouter extends Disposable implements
 	}
 
 	async writeFile(resource: URI, content: Uint8Array, opts: IFileWriteOptions): Promise<void> {
-		return this.getClient(resource).writeFile(resource, content, opts);
+		return this.callHost(resource, client => client.writeFile(resource, content, opts));
 	}
 
 	async open(resource: URI, opts: IFileOpenOptions): Promise<number> {
 		const host = this.getHost(resource);
-		const innerFd = await host.client.open(resource, opts);
+		const innerFd = await this.callHost(resource, client => client.open(resource, opts));
 		const fd = this.nextFd++;
 		this.fds.set(fd, { host, innerFd });
 		return fd;
@@ -253,31 +265,31 @@ export class RemoteFileSystemRouter extends Disposable implements
 	//#region Move/Copy/Delete/Create Folder
 
 	async mkdir(resource: URI): Promise<void> {
-		return this.getClient(resource).mkdir(resource);
+		return this.callHost(resource, client => client.mkdir(resource));
 	}
 
 	async delete(resource: URI, opts: IFileDeleteOptions): Promise<void> {
-		return this.getClient(resource).delete(resource, opts);
+		return this.callHost(resource, client => client.delete(resource, opts));
 	}
 
 	async rename(resource: URI, target: URI, opts: IFileOverwriteOptions): Promise<void> {
 		this.checkSameHost(resource, target);
-		return this.getClient(resource).rename(resource, target, opts);
+		return this.callHost(resource, client => client.rename(resource, target, opts));
 	}
 
 	async renameFileAtomic(resource: URI, target: URI, opts: IFileOverwriteOptions): Promise<void> {
 		this.checkSameHost(resource, target);
-		return this.getClient(resource).renameFileAtomic(resource, target, opts);
+		return this.callHost(resource, client => client.renameFileAtomic(resource, target, opts));
 	}
 
 	async copy(resource: URI, target: URI, opts: IFileOverwriteOptions): Promise<void> {
 		this.checkSameHost(resource, target);
-		return this.getClient(resource).copy(resource, target, opts);
+		return this.callHost(resource, client => client.copy(resource, target, opts));
 	}
 
 	async cloneFile(resource: URI, target: URI): Promise<void> {
 		this.checkSameHost(resource, target);
-		return this.getClient(resource).cloneFile(resource, target);
+		return this.callHost(resource, client => client.cloneFile(resource, target));
 	}
 
 	//#endregion

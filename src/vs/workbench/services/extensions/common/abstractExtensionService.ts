@@ -5,6 +5,7 @@
 
 import { Barrier } from '../../../../base/common/async.js';
 import { toErrorMessage } from '../../../../base/common/errorMessage.js';
+import { getErrorMessage } from '../../../../base/common/errors.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { IMarkdownString, MarkdownString } from '../../../../base/common/htmlContent.js';
 import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
@@ -695,8 +696,11 @@ export abstract class AbstractExtensionService extends Disposable implements IEx
 			const result = await this._resolveAuthorityInitial(remoteAuthority);
 			this._remoteAuthorityResolverService._setResolvedAuthority(result.authority, result.options);
 		} catch (err) {
-			this._remoteAuthorityResolverService._setResolvedAuthorityError(remoteAuthority, err);
-			throw err;
+			// Anything but a resolver error (e.g. no extension host while the extension hosts restart) is
+			// temporary: the connection of the host must keep reconnecting instead of failing for good.
+			const error = err instanceof RemoteAuthorityResolverError ? err : new RemoteAuthorityResolverError(getErrorMessage(err), RemoteAuthorityResolverErrorCode.TemporarilyNotAvailable);
+			this._remoteAuthorityResolverService._setResolvedAuthorityError(remoteAuthority, error);
+			throw error;
 		}
 	}
 

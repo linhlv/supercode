@@ -436,6 +436,20 @@ suite('ExtensionService', () => {
 		assert.deepStrictEqual({ ...resolved.authority.connectTo }, { type: RemoteConnectionType.WebSocket, host: '127.0.0.1', port: 9001 });
 	});
 
+	test('resolveRemoteAuthority reports errors that are not resolver errors as temporarily not available', async () => {
+		// e.g. 'Cannot resolve authority' while the extension hosts restart: the host's reconnection must keep trying
+		extService.resolveAuthorityResults.push(...Array.from({ length: 5 }, () => new Error('Cannot resolve authority')));
+		const resolverService = instantiationService.get(IRemoteAuthorityResolverService);
+
+		const thrown = await extService.resolveRemoteAuthority('test+c').catch(err => err);
+		const published = await resolverService.resolveAuthority('test+c').catch(err => err);
+
+		assert.deepStrictEqual(
+			{ thrown: RemoteAuthorityResolverError.isTemporarilyNotAvailable(thrown), published: RemoteAuthorityResolverError.isTemporarilyNotAvailable(published), message: thrown.message },
+			{ thrown: true, published: true, message: 'Cannot resolve authority' }
+		);
+	});
+
 	test('resolveRemoteAuthority publishes and rethrows errors', async () => {
 		extService.resolveAuthorityResults.push(new RemoteAuthorityResolverError('nope', RemoteAuthorityResolverErrorCode.NotAvailable));
 		const resolverService = instantiationService.get(IRemoteAuthorityResolverService);

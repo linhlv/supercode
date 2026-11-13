@@ -151,6 +151,9 @@ export class MultiRemoteService extends Disposable implements IMultiRemoteServic
 			}
 		}));
 		entry.disposables.add(connection.onReconnecting(() => {
+			// Like the primary authority: drop the previous attempt's resolution, which may have failed, so
+			// that the address this attempt asks for right after this event is the result of a fresh resolve.
+			this._remoteAuthorityResolverService._clearResolvedAuthority(authority);
 			this._extensionService.resolveRemoteAuthority(authority).catch(error => this._logService.error(`[MultiRemoteService] Failed to re-resolve ${authority}`, error));
 		}));
 	}

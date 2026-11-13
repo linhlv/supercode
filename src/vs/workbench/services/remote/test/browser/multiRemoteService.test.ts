@@ -142,8 +142,23 @@ suite('MultiRemoteService', () => {
 		connection.reconnectingEmitter.fire();
 		connection.stateEmitter.fire(new ConnectionGainEvent('t', 0, 1));
 		assert.deepStrictEqual({ lost, cleared, resolved, after: service.getState('ssh-remote+a') }, {
-			lost: 'reconnecting', cleared: ['ssh-remote+a'], resolved: ['ssh-remote+a', 'ssh-remote+a'], after: 'connected'
+			lost: 'reconnecting', cleared: ['ssh-remote+a', 'ssh-remote+a'], resolved: ['ssh-remote+a', 'ssh-remote+a'], after: 'connected'
 		});
+	});
+
+	test('every reconnection attempt drops the previous (failed) resolution before resolving again', async () => {
+		const { service, cleared, resolved } = create();
+		await service.connect('ssh-remote+a');
+		const connection = service.created[0];
+		connection.stateEmitter.fire(new ConnectionLostEvent('t', 0));
+		const attempts: number[] = [];
+		for (let i = 0; i < 2; i++) {
+			// The connection asks the resolver service for the address right after this event, synchronously
+			connection.reconnectingEmitter.fire();
+			attempts.push(cleared.length);
+		}
+		await Promise.resolve();
+		assert.deepStrictEqual({ clearedAfterEachAttempt: attempts, resolved: resolved.length }, { clearedAfterEachAttempt: [2, 3], resolved: 3 });
 	});
 
 	test('permanent failure then connect creates a new connection', async () => {

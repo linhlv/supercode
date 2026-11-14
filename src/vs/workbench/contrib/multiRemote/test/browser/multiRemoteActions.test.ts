@@ -82,8 +82,8 @@ suite('MultiRemoteActions', () => {
 		terminalAuthorities = [];
 	});
 
-	test('adds picked folders from the host\'s home', async () => {
-		const picked = [URI.from({ scheme: 'vscode-remote', authority: AUTHORITY, path: '/home/a/x' }), URI.from({ scheme: 'vscode-remote', authority: AUTHORITY, path: '/home/a/y' })];
+	test('adds the picked folder from the host\'s home, with a single-select dialog so that clicking a folder opens it', async () => {
+		const picked = [URI.from({ scheme: 'vscode-remote', authority: AUTHORITY, path: '/home/a/x' })];
 		dialogResult = picked;
 		await new AddRemoteFolderToWorkspaceAction().run(accessor(), AUTHORITY);
 
@@ -93,8 +93,8 @@ suite('MultiRemoteActions', () => {
 			added: added.map(folders => folders.map(f => ({ uri: f.uri.toString(), name: f.name })))
 		}, {
 			homeOk: true,
-			options: [true, false, true, [Schemas.vscodeRemote]],
-			added: [[{ uri: picked[0].toString(), name: 'x [SSH: alice@box]' }, { uri: picked[1].toString(), name: 'y [SSH: alice@box]' }]]
+			options: [true, false, false, [Schemas.vscodeRemote]],
+			added: [[{ uri: picked[0].toString(), name: 'x [SSH: alice@box]' }]]
 		});
 	});
 

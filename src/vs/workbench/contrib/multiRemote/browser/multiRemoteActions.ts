@@ -67,7 +67,8 @@ export class AddRemoteFolderToWorkspaceAction extends Action2 {
 		const picked = await fileDialogService.showOpenDialog({
 			canSelectFolders: true,
 			canSelectFiles: false,
-			canSelectMany: true,
+			// Single select: in a multi-select dialog a click only checks a folder, so it can't be browsed with the mouse
+			canSelectMany: false,
 			defaultUri: URI.from({ scheme: Schemas.vscodeRemote, authority, path: connected.environment.userHome.path }),
 			availableFileSystems: [Schemas.vscodeRemote]
 		});

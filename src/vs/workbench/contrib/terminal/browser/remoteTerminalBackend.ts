@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { DeferredPromise } from '../../../../base/common/async.js';
+import { DeferredPromise, raceTimeout } from '../../../../base/common/async.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { revive } from '../../../../base/common/marshalling.js';
 import { PerformanceMark, mark } from '../../../../base/common/performance.js';
@@ -33,6 +33,9 @@ import { getWorkspaceForTerminal } from '../common/terminalEnvironment.js';
 import { IRemoteAgentService } from '../../../services/remote/common/remoteAgentService.js';
 import { IMultiRemoteService } from '../../../services/remote/common/multiRemoteService.js';
 import { IStatusbarService } from '../../../services/statusbar/browser/statusbar.js';
+
+/** How long the shutdown of a window waits for an additional host to remove its auto replies. */
+const SECONDARY_HOST_SHUTDOWN_TIMEOUT = 1000;
 
 export class RemoteTerminalBackendContribution implements IWorkbenchContribution {
 	static ID = 'remoteTerminalBackend';
@@ -389,7 +392,13 @@ export class RemoteTerminalBackend extends BaseTerminalBackend implements ITermi
 		return this._remoteTerminalChannel.installAutoReply(match, reply, ownerId);
 	}
 
-	uninstallAllAutoReplies(ownerId: string): Promise<void> {
-		return this._remoteTerminalChannel.uninstallAllAutoReplies(ownerId);
+	async uninstallAllAutoReplies(ownerId: string): Promise<void> {
+		const uninstalled = this._remoteTerminalChannel.uninstallAllAutoReplies(ownerId);
+		if (!this.remoteAuthority || !this._multiRemoteService.isSecondary(this.remoteAuthority)) {
+			return uninstalled;
+		}
+		// The tunnel of an additional host lives in the local extension host, which stops while the window shuts
+		// down, so the answer may never come. Don't hold up quitting for it: the server drops the host's terminals anyway.
+		await raceTimeout(uninstalled.catch(() => undefined), SECONDARY_HOST_SHUTDOWN_TIMEOUT);
 	}
 }

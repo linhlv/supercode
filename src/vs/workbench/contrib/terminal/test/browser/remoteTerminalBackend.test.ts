@@ -4,7 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { DeferredPromise } from '../../../../../base/common/async.js';
 import { Event } from '../../../../../base/common/event.js';
+import { runWithFakedTimers } from '../../../../../base/test/common/timeTravelScheduler.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
@@ -24,6 +26,23 @@ import { RemoteTerminalChannelClient } from '../../common/remote/remoteTerminalC
 
 suite('RemoteTerminalBackend', () => {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('removing auto replies on an additional host that never answers gives up, so that quitting does not wait for it', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		const logService = new NullLogService() as unknown as ITerminalLogService;
+		const multiRemoteService = { isSecondary: (authority: string) => authority === 'ssh-remote+b' } as Partial<IMultiRemoteService> as IMultiRemoteService;
+		// The tunnel of an additional host closes with the local extension host while the window shuts down, so the call never returns
+		const neverAnswered = new DeferredPromise<void>();
+		const channel = new Proxy({ uninstallAllAutoReplies: () => neverAnswered.p }, {
+			get: (target, property) => typeof property === 'string' && property.startsWith('on') ? Event.None : (target as Record<string | symbol, unknown>)[property]
+		}) as unknown as RemoteTerminalChannelClient;
+		const backend = store.add(new RemoteTerminalBackend('ssh-remote+b', channel, multiRemoteService, {} as IInstantiationService, logService,
+			{} as ICommandService, {} as IStorageService, {} as IRemoteAuthorityResolverService, {} as IWorkspaceContextService,
+			{} as IConfigurationResolverService, {} as IHistoryService, {} as IConfigurationService, {} as IStatusbarService));
+
+		const result = await backend.uninstallAllAutoReplies('owner');
+
+		assert.deepStrictEqual({ result, answered: neverAnswered.isSettled }, { result: undefined, answered: false });
+	}));
 
 	test('a lost host ends every terminal with a message naming the host', async () => {
 		const logService = new NullLogService() as unknown as ITerminalLogService;

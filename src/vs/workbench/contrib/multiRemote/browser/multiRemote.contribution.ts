@@ -17,6 +17,7 @@ import { RemoteFileSystemRouter } from '../../../services/remote/browser/remoteF
 import { IMultiRemoteService } from '../../../services/remote/common/multiRemoteService.js';
 import { AddRemoteFolderToWorkspaceAction } from './multiRemoteActions.js';
 import { IHostDemandService } from './hostDemand.js';
+import { MultiRemoteOpenerContribution } from './multiRemoteOpener.js';
 import { MultiRemoteStatusContribution } from './multiRemoteStatus.js';
 import { MultiRemoteTerminalContribution } from './multiRemoteTerminal.js';
 import './workspaceGroupsActions.js';
@@ -52,6 +53,7 @@ export class MultiRemoteFileSystemContribution extends Disposable implements IWo
 registerWorkbenchContribution2(MultiRemoteFileSystemContribution.ID, MultiRemoteFileSystemContribution, WorkbenchPhase.BlockStartup);
 registerWorkbenchContribution2(MultiRemoteTerminalContribution.ID, MultiRemoteTerminalContribution, WorkbenchPhase.AfterRestored);
 registerWorkbenchContribution2(MultiRemoteWorkspaceContribution.ID, MultiRemoteWorkspaceContribution, WorkbenchPhase.BlockStartup);
+registerWorkbenchContribution2(MultiRemoteOpenerContribution.ID, MultiRemoteOpenerContribution, WorkbenchPhase.AfterRestored);
 registerAction2(ReconnectHostAction);
 registerWorkbenchContribution2(MultiRemoteStatusContribution.ID, MultiRemoteStatusContribution, WorkbenchPhase.AfterRestored);
 registerAction2(AddRemoteFolderToWorkspaceAction);

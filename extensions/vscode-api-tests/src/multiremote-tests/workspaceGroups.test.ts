@@ -112,9 +112,8 @@ suite('workspace groups', () => {
 		await vscode.workspace.fs.writeFile(file, encoder.encode('opened from a collapsed group'));
 		await collapseAndWaitForDisconnect();
 
-		// `vscode.open` stats the file first (to find folders) and would fail fast on the disconnected host before
-		// any editor opens; `vscode.openWith` opens the editor directly, like Quick Open and the editor history do
-		await vscode.commands.executeCommand('vscode.openWith', file, 'default');
+		// goes through the opener service like links do: the host connects before the file is looked at
+		await vscode.commands.executeCommand('vscode.open', file);
 		await waitForState('test+b', 'connected');
 
 		await poll(

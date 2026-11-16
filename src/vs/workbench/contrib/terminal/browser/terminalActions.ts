@@ -315,11 +315,20 @@ export function registerTerminalActions() {
 	registerTerminalAction({
 		id: TerminalCommandId.CreateTerminalEditor,
 		title: localize2('workbench.action.terminal.createTerminalEditor', 'Create New Terminal in Editor Area'),
-		run: async (c, _, args) => {
+		run: async (c, accessor, args) => {
 			function isCreateTerminalOptions(obj: unknown): obj is ICreateTerminalOptions {
 				return isObject(obj) && 'location' in obj;
 			}
-			const options = isCreateTerminalOptions(args) ? args : { location: { viewColumn: ACTIVE_GROUP } };
+			let options: ICreateTerminalOptions;
+			if (isCreateTerminalOptions(args)) {
+				options = args;
+			} else {
+				const picked = await pickCwdForNewTerminal(accessor);
+				if (!picked) {
+					return;
+				}
+				options = { location: { viewColumn: ACTIVE_GROUP }, cwd: picked.cwd };
+			}
 			const instance = await c.service.createTerminal(options);
 			await instance.focusWhenReady();
 		}
@@ -333,11 +342,12 @@ export function registerTerminalActions() {
 			// Force the editor into the same editor group if it's locked. This command is only ever
 			// called when a terminal is the active editor
 			const editorGroupsService = accessor.get(IEditorGroupsService);
-			const instance = await c.service.createTerminal({
-				location: {
-					viewColumn: editorGroupToColumn(editorGroupsService, editorGroupsService.activeGroup),
-				}
-			});
+			const viewColumn = editorGroupToColumn(editorGroupsService, editorGroupsService.activeGroup);
+			const picked = await pickCwdForNewTerminal(accessor);
+			if (!picked) {
+				return;
+			}
+			const instance = await c.service.createTerminal({ location: { viewColumn }, cwd: picked.cwd });
 			await instance.focusWhenReady();
 		}
 	});
@@ -345,10 +355,12 @@ export function registerTerminalActions() {
 	registerTerminalAction({
 		id: TerminalCommandId.CreateTerminalEditorSide,
 		title: localize2('workbench.action.terminal.createTerminalEditorSide', 'Create New Terminal in Editor Area to the Side'),
-		run: async (c) => {
-			const instance = await c.service.createTerminal({
-				location: { viewColumn: SIDE_GROUP }
-			});
+		run: async (c, accessor) => {
+			const picked = await pickCwdForNewTerminal(accessor);
+			if (!picked) {
+				return;
+			}
+			const instance = await c.service.createTerminal({ location: { viewColumn: SIDE_GROUP }, cwd: picked.cwd });
 			await instance.focusWhenReady();
 		}
 	});
@@ -1648,6 +1660,19 @@ export function refreshTerminalActions(detectedProfiles: ITerminalProfile[]): ID
 
 function getResourceOrActiveInstance(c: ITerminalServicesCollection, resource: unknown): ITerminalInstance | undefined {
 	return c.service.getInstanceFromResource(toOptionalUri(resource)) || c.service.activeInstance;
+}
+
+/**
+ * The cwd of a new terminal that was not given one. With several workspace folders, asks for one like
+ * New Terminal does: in a multi-host window the folder also decides the machine the terminal runs on.
+ * Resolves `{ cwd: undefined }` to leave the cwd to the terminal service, and `undefined` when cancelled.
+ */
+export async function pickCwdForNewTerminal(accessor: ServicesAccessor): Promise<{ cwd: URI | undefined } | undefined> {
+	if (accessor.get(IWorkspaceContextService).getWorkspace().folders.length <= 1) {
+		return { cwd: undefined };
+	}
+	const pair = await pickTerminalCwd(accessor);
+	return pair ? { cwd: pair.cwd } : undefined;
 }
 
 async function pickTerminalCwd(accessor: ServicesAccessor, cancel?: CancellationToken): Promise<WorkspaceFolderCwdPair | undefined> {

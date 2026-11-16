@@ -5,9 +5,18 @@
 
 import { deepStrictEqual } from 'assert';
 import { URI } from '../../../../../base/common/uri.js';
+import { mock } from '../../../../../base/test/common/mock.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { IWorkspaceFolder } from '../../../../../platform/workspace/common/workspace.js';
-import { WorkspaceFolderCwdPair, shrinkWorkspaceFolderCwdPairs } from '../../browser/terminalActions.js';
+import { IModelService } from '../../../../../editor/common/services/model.js';
+import { ILanguageService } from '../../../../../editor/common/languages/language.js';
+import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
+import { TestInstantiationService } from '../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
+import { ILabelService } from '../../../../../platform/label/common/label.js';
+import { IQuickInputService, IQuickPickItem, QuickPickInput } from '../../../../../platform/quickinput/common/quickInput.js';
+import { IWorkspaceContextService, IWorkspaceFolder } from '../../../../../platform/workspace/common/workspace.js';
+import { IConfigurationResolverService } from '../../../../services/configurationResolver/common/configurationResolver.js';
+import { WorkspaceFolderCwdPair, pickCwdForNewTerminal, shrinkWorkspaceFolderCwdPairs } from '../../browser/terminalActions.js';
 
 function makeFakeFolder(name: string, uri: URI): IWorkspaceFolder {
 	return {
@@ -28,13 +37,45 @@ function makePair(folder: IWorkspaceFolder, cwd?: URI | IWorkspaceFolder, isAbso
 }
 
 suite('terminalActions', () => {
-	ensureNoDisposablesAreLeakedInTestSuite();
+	const store = ensureNoDisposablesAreLeakedInTestSuite();
 
 	const root: URI = URI.file('/some-root');
 	const a = makeFakeFolder('a', URI.joinPath(root, 'a'));
 	const b = makeFakeFolder('b', URI.joinPath(root, 'b'));
 	const c = makeFakeFolder('c', URI.joinPath(root, 'c'));
 	const d = makeFakeFolder('d', URI.joinPath(root, 'd'));
+
+	suite('pickCwdForNewTerminal', () => {
+		async function pick(folders: IWorkspaceFolder[]): Promise<{ result: { cwd: URI | undefined } | undefined; offered: string[] }> {
+			const offered: string[] = [];
+			const instantiationService = store.add(new TestInstantiationService());
+			instantiationService.stub(IWorkspaceContextService, new class extends mock<IWorkspaceContextService>() {
+				override getWorkspace() { return { id: 'w', folders, uri: undefined }; }
+			});
+			instantiationService.stub(IQuickInputService, new class extends mock<IQuickInputService>() {
+				override async pick<T extends IQuickPickItem>(picks: Promise<QuickPickInput<T>[]> | QuickPickInput<T>[]): Promise<T | undefined> {
+					const items = (Array.isArray(picks) ? picks : await picks).filter((item): item is T => item.type !== 'separator');
+					offered.push(...items.map(item => item.label));
+					return items[items.length - 1];
+				}
+			});
+			instantiationService.stub(ILabelService, { getUriLabel: (uri: URI) => uri.path });
+			instantiationService.stub(IConfigurationService, new TestConfigurationService());
+			instantiationService.stub(IConfigurationResolverService, {});
+			instantiationService.stub(IModelService, {});
+			instantiationService.stub(ILanguageService, {});
+			const result = await instantiationService.invokeFunction(accessor => pickCwdForNewTerminal(accessor));
+			return { result, offered };
+		}
+
+		test('asks which root to start in when the workspace has several', async () => {
+			deepStrictEqual(await pick([a, b]), { result: { cwd: b.uri }, offered: ['a', 'b'] });
+		});
+
+		test('leaves the cwd to the terminal service with a single root', async () => {
+			deepStrictEqual(await pick([a]), { result: { cwd: undefined }, offered: [] });
+		});
+	});
 
 	suite('shrinkWorkspaceFolderCwdPairs', () => {
 		test('should return empty when given array is empty', () => {

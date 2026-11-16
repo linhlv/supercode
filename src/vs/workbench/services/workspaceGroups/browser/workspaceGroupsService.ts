@@ -4,8 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Sequencer } from '../../../../base/common/async.js';
+import { onUnexpectedError } from '../../../../base/common/errors.js';
 import { Emitter } from '../../../../base/common/event.js';
-import { parse } from '../../../../base/common/json.js';
+import { parse, ParseError } from '../../../../base/common/json.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { isWeb } from '../../../../base/common/platform.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -59,6 +60,8 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 	private collapsedState: { [name: string]: boolean } = {};
 	private cachedGroups: readonly IWorkspaceGroup[] = [];
 	private focusedGroup: string | undefined;
+	/** Set while the last read of the workspace file failed: `memberships` are the last known ones and must not be written back. */
+	private readFailed = false;
 	private requestedLoads = 0;
 	private appliedLoad = 0;
 
@@ -82,14 +85,16 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 		this._register(this.contextService.onDidChangeWorkspaceFolders(e => {
 			// Decide synchronously, so that folders being added through `addFolders` are recognised.
 			const joining = e.added.filter(folder => !this.explicitAdds.has(folderKey(folder.uri))).map(folder => folder.uri);
-			this.queue.queue(() => this.onFoldersChanged(joining));
+			this.queue.queue(() => this.onFoldersChanged(joining)).catch(onUnexpectedError);
 		}));
 		this._register(this.fileService.onDidFilesChange(e => {
 			const configPath = this.configPath;
 			if (configPath && e.contains(configPath)) {
-				this.queue.queue(() => this.refresh());
+				this.queue.queue(() => this.refresh()).catch(onUnexpectedError);
 			}
 		}));
+		// Entering a workspace without a reload (a local window) changes the workspace file without changing the folders
+		this._register(this.contextService.onDidChangeWorkbenchState(() => this.queue.queue(() => this.refresh()).catch(onUnexpectedError)));
 
 		this.whenReady = this.queue.queue(() => this.refresh()).catch(() => { });
 	}
@@ -133,7 +138,7 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 				return unique;
 			}
 
-			await this.refresh();
+			await this.refreshForWrite();
 			const unique = uniqueGroupName(trimmed, this.memberships.map(group => group.name));
 			const next = this.assign(this.memberships, unique, folders.map(folder => folder.uri), true);
 			await this.addAndWrite(folders, next);
@@ -224,7 +229,7 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 
 			const state = this.contextService.getWorkbenchState();
 			if (state === WorkbenchState.WORKSPACE) {
-				await this.refresh();
+				await this.refreshForWrite();
 			}
 			const inWindow = new Set(this.contextService.getWorkspace().folders.map(folder => folderKey(folder.uri)));
 			const skipped: URI[] = [];
@@ -284,9 +289,18 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 			return Promise.resolve();
 		}
 		return this.queue.queue(async () => {
-			await this.refresh();
+			await this.refreshForWrite();
 			await task();
 		});
+	}
+
+	/** Reads the workspace file before a change; refuses the change when the file cannot be read, as writing would lose its groups. */
+	private async refreshForWrite(): Promise<void> {
+		await this.refresh();
+		if (this.readFailed) {
+			const fileName = this.configPath ? this.uriIdentityService.extUri.basename(this.configPath) : '';
+			throw new Error(localize('workspaceGroups.readFailed', "The workspace groups could not be read from '{0}'. Fix the workspace file and try again.", fileName));
+		}
 	}
 
 	/** Returns `groups` with `folders` moved into `name` (appended, or created when `create` is set). */
@@ -307,21 +321,37 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 	private async onFoldersChanged(joining: readonly URI[]): Promise<void> {
 		await this.refresh();
 		const target = this.focusedGroup === undefined ? undefined : this.find(this.focusedGroup);
-		if (this.isActive && target && joining.length) {
-			await this.writeMemberships(this.assign(this.memberships, target.name, joining));
+		// Only folders that no group lists join the focused one: a folder the file lists keeps its group
+		const ungrouped = joining.filter(folder => !this.memberships.some(group => group.folders.some(candidate => folderKey(candidate) === folderKey(folder))));
+		if (this.isActive && !this.readFailed && target && ungrouped.length) {
+			await this.writeMemberships(this.assign(this.memberships, target.name, ungrouped));
 		}
 	}
 
 	/** Adds `folders` to the workspace and writes `memberships`, which already count them as members while they appear. */
 	private async addAndWrite(folders: readonly IWorkspaceFolderCreationData[], memberships: readonly IGroupMembership[]): Promise<void> {
-		this.pending = memberships;
-		this.rebuild();
+		this.setPending(memberships);
 		try {
 			await this.addToWorkspace(folders);
 			await this.writeMemberships(memberships);
 		} finally {
-			this.pending = undefined;
-			this.rebuild();
+			this.clearPending();
+		}
+	}
+
+	/** Reports `memberships` as `groups` until `clearPending`. */
+	private setPending(memberships: readonly IGroupMembership[]): void {
+		this.pending = memberships;
+		this.rebuild();
+	}
+
+	/** Reports the stored memberships again, and tells listeners when they differ from the pending ones (a failed or partial change). */
+	private clearPending(): void {
+		const shown = this.pending;
+		this.pending = undefined;
+		this.rebuild();
+		if (shown && JSON.stringify(toStoredGroups(shown)) !== JSON.stringify(toStoredGroups(this.memberships))) {
+			this._onDidChange.fire();
 		}
 	}
 
@@ -354,7 +384,14 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 		if (!this.userDataProfileService.currentProfile.isDefault) {
 			await this.userDataProfilesService.setProfileForWorkspace(untitled, this.userDataProfileService.currentProfile);
 		}
-		await this.workspaceEditingService.enterWorkspace(untitled.configPath);
+		// A local window enters the workspace without a reload: the new folders must count as members while they appear
+		this.setPending(groups);
+		try {
+			await this.workspaceEditingService.enterWorkspace(untitled.configPath);
+			await this.refresh();
+		} finally {
+			this.clearPending();
+		}
 	}
 
 	private async writeMemberships(groups: readonly IGroupMembership[]): Promise<void> {
@@ -372,21 +409,27 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 		const configPath = this.configPath;
 		const load = ++this.requestedLoads;
 		let raw: unknown;
+		let failed = false;
 		if (configPath) {
 			try {
 				const content = await this.fileService.readFile(configPath);
-				raw = parse(content.value.toString(), [], { allowTrailingComma: true })?.[WORKSPACE_GROUPS_KEY];
+				const errors: ParseError[] = [];
+				raw = parse(content.value.toString(), errors, { allowTrailingComma: true })?.[WORKSPACE_GROUPS_KEY];
+				failed = errors.length > 0;
 			} catch {
-				raw = undefined;
+				failed = true;
 			}
 		}
 		if (load < this.appliedLoad) {
 			return;
 		}
 		this.appliedLoad = load;
+		this.readFailed = failed;
 
 		const folders = this.contextService.getWorkspace().folders.map(folder => folder.uri);
-		const next = configPath ? reconcileGroups(raw, folders, this.uriIdentityService.extUri) : [];
+		// A failed read keeps the last known groups, so that roots do not turn ungrouped (and their hosts connect)
+		const source = failed ? toStoredGroups(this.memberships) : raw;
+		const next = configPath ? reconcileGroups(source, folders, this.uriIdentityService.extUri) : [];
 		const changed = JSON.stringify(toStoredGroups(next)) !== JSON.stringify(toStoredGroups(this.memberships));
 		this.memberships = next;
 		this.rebuild();

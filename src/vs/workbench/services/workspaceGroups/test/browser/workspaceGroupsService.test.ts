@@ -40,6 +40,10 @@ suite('WorkspaceGroupsService', () => {
 	let log: string[];
 	let writes: number;
 	let untitledConfigPath: URI;
+	let workspaceConfigPath: URI;
+	let stateEmitter: Emitter<WorkbenchState>;
+	let onEnterWorkspace: ((path: URI) => Promise<void>) | undefined;
+	let failWrites: boolean;
 
 	function toFolder(uri: URI, index: number): IWorkspaceFolder {
 		return { uri, name: uri.path, index, toResource: p => URI.joinPath(uri, p) };
@@ -68,14 +72,18 @@ suite('WorkspaceGroupsService', () => {
 	function create(): WorkspaceGroupsService {
 		const contextService = {
 			getWorkbenchState: () => state,
-			getWorkspace: () => ({ folders, configuration: state === WorkbenchState.WORKSPACE ? configPath : null }),
-			onDidChangeWorkspaceFolders: foldersEmitter.event
+			getWorkspace: () => ({ folders, configuration: state === WorkbenchState.WORKSPACE ? workspaceConfigPath : null }),
+			onDidChangeWorkspaceFolders: foldersEmitter.event,
+			onDidChangeWorkbenchState: stateEmitter.event
 		};
 		const jsonEditingService: IJSONEditingService = {
 			_serviceBrand: undefined,
 			write: async (resource: URI, values: IJSONValue[]) => {
 				log.push('write');
 				writes++;
+				if (failWrites) {
+					throw new Error('write failed');
+				}
 				let text = (await fileService.readFile(resource)).value.toString();
 				for (const value of values) {
 					text = applyEdits(text, setProperty(text, value.path, value.value, { insertSpaces: false, tabSize: 4, eol: '\n' }));
@@ -96,7 +104,10 @@ suite('WorkspaceGroupsService', () => {
 				folders = folders.filter(f => !removed.includes(f)).map((f, i) => toFolder(f.uri, i));
 				foldersEmitter.fire({ added: [], removed, changed: [] });
 			},
-			enterWorkspace: async (path: URI) => { log.push(`enterWorkspace ${path.toString()}`); }
+			enterWorkspace: async (path: URI) => {
+				log.push(`enterWorkspace ${path.toString()}`);
+				await onEnterWorkspace?.(path);
+			}
 		};
 		const workspacesService = {
 			createUntitledWorkspace: async (toCreate?: IWorkspaceFolderCreationData[]): Promise<IWorkspaceIdentifier> => {
@@ -131,11 +142,15 @@ suite('WorkspaceGroupsService', () => {
 		store.add(fileService.registerProvider(Schemas.file, store.add(new InMemoryFileSystemProvider())));
 		storageService = store.add(new InMemoryStorageService());
 		foldersEmitter = store.add(new Emitter<IWorkspaceFoldersChangeEvent>());
+		stateEmitter = store.add(new Emitter<WorkbenchState>());
+		onEnterWorkspace = undefined;
+		failWrites = false;
 		state = WorkbenchState.WORKSPACE;
 		remoteAuthority = undefined;
 		log = [];
 		writes = 0;
 		untitledConfigPath = URI.parse('file:///untitled/workspace.code-workspace');
+		workspaceConfigPath = configPath;
 		setFolders([a, b, c]);
 	});
 
@@ -203,6 +218,56 @@ suite('WorkspaceGroupsService', () => {
 		setFolders([]);
 		await create().createGroup('g', [{ uri: b }]);
 		assert.deepStrictEqual(log, [`createUntitledWorkspace ${b.toString()}`, 'write', `enterWorkspace ${untitledConfigPath.toString()}`]);
+	});
+
+	/** Enters the untitled workspace like a local desktop window does: no reload, folder event only when folders change. */
+	function enterUntitledWorkspace(seen: string[] = [], groupOf: (uri: URI) => string | undefined = () => undefined): (path: URI) => Promise<void> {
+		return async path => {
+			const stored: { folders: { uri: string }[] } = await readJson(path);
+			const before = folders.map(f => f.uri.toString());
+			const uris = stored.folders.map(f => URI.parse(f.uri));
+			uris.forEach(uri => seen.push(`entering ${uri.path} ${groupOf(uri)}`));
+			state = WorkbenchState.WORKSPACE;
+			workspaceConfigPath = path;
+			setFolders(uris);
+			stateEmitter.fire(WorkbenchState.WORKSPACE);
+			const added = folders.filter(f => !before.includes(f.uri.toString()));
+			if (added.length) {
+				foldersEmitter.fire({ added, removed: [], changed: [] });
+			}
+		};
+	}
+
+	test('the first group of a folder window shows once the window entered the workspace', async () => {
+		state = WorkbenchState.FOLDER;
+		setFolders([a]);
+		onEnterWorkspace = enterUntitledWorkspace();
+		const service = create();
+		let fired = 0;
+		store.add(service.onDidChange(() => fired++));
+
+		await service.createGroup('g');
+
+		assert.deepStrictEqual({ groups: summarize(service), fired: fired > 0 }, { groups: [{ name: 'g', collapsed: true, folders: [] }], fired: true });
+	});
+
+	test('folders imported into a folder window never appear ungrouped', async () => {
+		state = WorkbenchState.FOLDER;
+		setFolders([a]);
+		const seen: string[] = [];
+		const service = create();
+		onEnterWorkspace = enterUntitledWorkspace(seen, uri => service.getGroupOf(uri)?.name);
+		store.add(foldersEmitter.event(e => e.added.forEach(f => seen.push(`added ${f.uri.path} ${service.getGroupOf(f.uri)?.name}`))));
+		service.setFocusedGroup('other');
+		const file = URI.parse('file:///imports/shop.code-workspace');
+		await writeFile(file, { folders: [{ uri: b.toString() }, { uri: c.toString() }] });
+
+		await service.importWorkspaceFile(file);
+
+		assert.deepStrictEqual({ seen, groups: summarize(service) }, {
+			seen: ['entering /a undefined', 'entering /b shop', 'entering /c shop', 'added /b shop', 'added /c shop'],
+			groups: [{ name: 'shop', collapsed: true, folders: [b.toString(), c.toString()] }]
+		});
 	});
 
 	test('mutators other than createGroup are no-ops in a folder window', async () => {
@@ -282,6 +347,54 @@ suite('WorkspaceGroupsService', () => {
 		await service.addFolders('h', [{ uri: c }]);
 		await changed;
 		assert.deepStrictEqual(summarize(service).map(g => g.folders), [[a.toString(), b.toString()], [c.toString()]]);
+	});
+
+	test('a folder the workspace file lists keeps its group while another group is focused', async () => {
+		await seed([{ name: 'g', folders: [a] }, { name: 'h', folders: [] }], [a]);
+		const service = await created(create());
+		service.setFocusedGroup('g');
+
+		// an extension or a hand edit adds b to the workspace and lists it under h
+		await seed([{ name: 'g', folders: [a] }, { name: 'h', folders: [b] }], [a, b]);
+		foldersEmitter.fire({ added: [folders[1]], removed: [], changed: [] });
+		await service.moveFolder(a, 'g'); // runs after the folder change was handled
+
+		assert.deepStrictEqual(summarize(service).map(g => g.folders), [[a.toString()], [b.toString()]]);
+	});
+
+	test('a failed add shows the folders ungrouped again', async () => {
+		await seed([{ name: 'g', folders: [a] }], [a]);
+		const service = await created(create());
+		const seen: string[][][] = [];
+		store.add(service.onDidChange(() => seen.push(service.groups.map(g => g.folders.map(f => f.toString())))));
+		failWrites = true;
+
+		await assert.rejects(service.addFolders('g', [{ uri: b }]), /write failed/);
+
+		assert.deepStrictEqual({ last: seen.at(-1), groups: summarize(service).map(g => g.folders) }, { last: [[a.toString()]], groups: [[a.toString()]] });
+	});
+
+	test('keeps the groups and refuses changes when the workspace file cannot be read', async () => {
+		await seed([{ name: 'g', folders: [a] }]);
+		const service = await created(create());
+		await fileService.del(configPath);
+
+		await assert.rejects(service.renameGroup('g', 'x'), /could not be read/);
+		await assert.rejects(service.createGroup('n'), /could not be read/);
+
+		assert.deepStrictEqual({ groups: summarize(service).map(g => g.name), group: service.getGroupOf(a)?.name, exists: await fileService.exists(configPath) }, { groups: ['g'], group: 'g', exists: false });
+	});
+
+	test('keeps the groups and refuses changes while the workspace file does not parse', async () => {
+		await seed([{ name: 'g', folders: [a] }]);
+		const service = await created(create());
+		const broken = `{ "folders": [{ "uri": "${a}" }], "${WORKSPACE_GROUPS_KEY}": [{ "name": "g", "folders": [`;
+		await fileService.writeFile(configPath, VSBuffer.fromString(broken));
+
+		await assert.rejects(service.createGroup('n'), /could not be read/);
+		await assert.rejects(service.moveFolder(a, undefined), /could not be read/);
+
+		assert.deepStrictEqual({ groups: summarize(service).map(g => g.name), content: (await fileService.readFile(configPath)).value.toString() }, { groups: ['g'], content: broken });
 	});
 
 	test('folders added into a group never appear ungrouped', async () => {

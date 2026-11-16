@@ -9,6 +9,7 @@ import { Emitter, Event } from '../../base/common/event.js';
 import { VSBuffer } from '../../base/common/buffer.js';
 import { ProcessTimeRunOnceScheduler } from '../../base/common/async.js';
 import { IDisposable } from '../../base/common/lifecycle.js';
+import { IServerLifetimeService } from './serverLifetimeService.js';
 
 function printTime(ms: number): string {
 	let h = 0;
@@ -47,14 +48,19 @@ export class ManagementConnection {
 	private _disconnectRunner1: ProcessTimeRunOnceScheduler;
 	private _disconnectRunner2: ProcessTimeRunOnceScheduler;
 	private readonly _socketCloseListener: IDisposable;
+	private readonly _lifetimeToken: IDisposable;
 
 	constructor(
 		private readonly _logService: ILogService,
 		private readonly _reconnectionToken: string,
 		remoteAddress: string,
 		protocol: PersistentProtocol,
-		reconnectionGraceTime: number
+		reconnectionGraceTime: number,
+		serverLifetimeService: IServerLifetimeService
 	) {
+		// A window may connect without an extension host (an additional host of a multi-host window),
+		// so the management connection itself keeps the server from auto-shutting down.
+		this._lifetimeToken = serverLifetimeService.active(`Management:${_reconnectionToken.substring(0, 8)}`);
 		this._reconnectionGraceTime = reconnectionGraceTime;
 		const defaultShortGrace = ProtocolConstants.ReconnectionShortGraceTime;
 		this._reconnectionShortGraceTime = reconnectionGraceTime > 0 ? Math.min(defaultShortGrace, reconnectionGraceTime) : 0;
@@ -109,6 +115,7 @@ export class ManagementConnection {
 		this._disconnectRunner1.dispose();
 		this._disconnectRunner2.dispose();
 		this._socketCloseListener.dispose();
+		this._lifetimeToken.dispose();
 		const socket = this.protocol.getSocket();
 		this.protocol.sendDisconnect();
 		this.protocol.dispose();

@@ -62,6 +62,8 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 	private focusedGroup: string | undefined;
 	/** Set while the last read of the workspace file failed: `memberships` are the last known ones and must not be written back. */
 	private readFailed = false;
+	/** The workspace file that `memberships` were last read from without errors. */
+	private cleanlyRead: URI | undefined;
 	private requestedLoads = 0;
 	private appliedLoad = 0;
 
@@ -409,26 +411,33 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 		const configPath = this.configPath;
 		const load = ++this.requestedLoads;
 		let raw: unknown;
-		let failed = false;
+		let unreadable = false;
+		let unparsable = false;
 		if (configPath) {
 			try {
 				const content = await this.fileService.readFile(configPath);
 				const errors: ParseError[] = [];
 				raw = parse(content.value.toString(), errors, { allowTrailingComma: true })?.[WORKSPACE_GROUPS_KEY];
-				failed = errors.length > 0;
+				unparsable = errors.length > 0;
 			} catch {
-				failed = true;
+				unreadable = true;
 			}
 		}
 		if (load < this.appliedLoad) {
 			return;
 		}
 		this.appliedLoad = load;
-		this.readFailed = failed;
+		this.readFailed = unreadable || unparsable;
 
 		const folders = this.contextService.getWorkspace().folders.map(folder => folder.uri);
-		// A failed read keeps the last known groups, so that roots do not turn ungrouped (and their hosts connect)
-		const source = failed ? toStoredGroups(this.memberships) : raw;
+		// A failed read keeps the last known groups, so that roots do not turn ungrouped (and their hosts connect).
+		// Until this file was read cleanly there are none, and the tolerant parse is the best layout known.
+		const readCleanlyBefore = !!configPath && !!this.cleanlyRead && this.uriIdentityService.extUri.isEqual(configPath, this.cleanlyRead);
+		const keepLast = unreadable || (unparsable && readCleanlyBefore);
+		const source = keepLast ? toStoredGroups(this.memberships) : raw;
+		if (!this.readFailed) {
+			this.cleanlyRead = configPath;
+		}
 		const next = configPath ? reconcileGroups(source, folders, this.uriIdentityService.extUri) : [];
 		const changed = JSON.stringify(toStoredGroups(next)) !== JSON.stringify(toStoredGroups(this.memberships));
 		this.memberships = next;

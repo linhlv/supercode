@@ -397,6 +397,18 @@ suite('WorkspaceGroupsService', () => {
 		assert.deepStrictEqual({ groups: summarize(service).map(g => g.name), content: (await fileService.readFile(configPath)).value.toString() }, { groups: ['g'], content: broken });
 	});
 
+	test('shows the groups of a workspace file that does not parse at startup and refuses changes', async () => {
+		setFolders([a, b]);
+		// the syntax error (a missing comma) is outside the groups
+		const broken = `{ "folders": [{ "uri": "${a}" }, { "uri": "${b}" }], "settings": { "x": 1 "y": 2 }, "${WORKSPACE_GROUPS_KEY}": [{ "name": "g", "folders": ["${a}"] }] }`;
+		await fileService.writeFile(configPath, VSBuffer.fromString(broken));
+		const service = await created(create());
+
+		await assert.rejects(service.createGroup('n'), /could not be read/);
+
+		assert.deepStrictEqual({ groups: summarize(service), ungrouped: service.getGroupOf(b), content: (await fileService.readFile(configPath)).value.toString() }, { groups: [{ name: 'g', collapsed: true, folders: [a.toString()] }], ungrouped: undefined, content: broken });
+	});
+
 	test('folders added into a group never appear ungrouped', async () => {
 		await seed([{ name: 'g', folders: [a] }], [a]);
 		const seen: string[] = [];

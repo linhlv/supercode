@@ -9,6 +9,7 @@ import { ILogger } from '../common/logger';
 import { AUTH_CONFIRMED_RE, CommandRunner, LineParser } from './nativeSshParser';
 import { RemotePlatform } from '../common/platform';
 import { NativeSshServerClient, NativeSshKeepalive } from './nativeSshServerClient';
+import { isRemoteServerReachable } from './nativeSshProbe';
 import { Architecture, buildServerInstallOptions, generateBashInstallScript, resolveBashServerDataDir, generatePowerShellInstallScript, parseKernelName, parseMachineArch, parseServerInstallOutput, Platform, ServerInstallError, ServerInstallOptions, ServerInstallResult } from '../serverSetup';
 import { ServerVersion } from '../server-config/types';
 import { getNativeSshSocketPath } from './nativeSshConnection';
@@ -69,6 +70,7 @@ export interface NativeInstallInputs {
 const SCHEMA_VERSION = 1;
 const SERVER_READY_TIMEOUT_MS = 10_000;
 const SERVER_READY_POLL_MS = 100;
+const REMOTE_SERVER_PROBE_TIMEOUT_MS = 5_000;
 
 export class NativeSshRegistry {
     private constructor(private readonly registryFilePath: string) { }
@@ -182,7 +184,7 @@ export class NativeSshManager {
         const existing = await this.registry.read();
         if (existing) {
             const client = new NativeSshServerClient(existing.socketPath);
-            if (await client.isHealthy()) {
+            if (await client.isHealthy() && await this.isRemoteServerAlive(existing)) {
                 this.startKeepalive(client);
                 this.options.logger.info(`Adopting local server pid=${existing.pid} socket=${existing.socketPath}`);
                 this.serverInfo = { socketPath: existing.socketPath, pid: existing.pid, reused: true };
@@ -199,6 +201,18 @@ export class NativeSshManager {
         this.serverInfo = info;
 
         return undefined;
+    }
+
+    /** A helper is only worth adopting while the remote server it was set up for still answers. */
+    private async isRemoteServerAlive(entry: NativeSshRegistryEntry): Promise<boolean> {
+        if (typeof entry.listeningOn !== 'number') {
+            return true;
+        }
+        if (await isRemoteServerReachable(entry.socksPort, entry.listeningOn, REMOTE_SERVER_PROBE_TIMEOUT_MS)) {
+            return true;
+        }
+        this.options.logger.info(`Remote server on port ${entry.listeningOn} no longer answers; starting a new local server`);
+        return false;
     }
 
     private startKeepalive(client: NativeSshServerClient): void {

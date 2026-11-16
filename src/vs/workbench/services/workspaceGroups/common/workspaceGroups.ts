@@ -187,6 +187,13 @@ export interface IWorkspaceGroupsService {
 
 	readonly _serviceBrand: undefined;
 
+	/**
+	 * Resolves once the initial read of the workspace file has been applied (resolves immediately
+	 * when groups are inactive: remote, web, folder or empty window). Never rejects: a failed
+	 * initial read resolves with no groups.
+	 */
+	readonly whenReady: Promise<void>;
+
 	/** Fires when membership, order, names or collapsed state change. */
 	readonly onDidChange: Event<void>;
 

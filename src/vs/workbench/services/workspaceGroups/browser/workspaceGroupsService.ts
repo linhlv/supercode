@@ -44,6 +44,8 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	readonly onDidChange = this._onDidChange.event;
 
+	readonly whenReady: Promise<void>;
+
 	private readonly queue = new Sequencer();
 	/** Folders being added by this service for a specific group; the focused-group rule skips them. */
 	private readonly explicitAdds = new Set<string>();
@@ -84,7 +86,7 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 			}
 		}));
 
-		this.queue.queue(() => this.refresh());
+		this.whenReady = this.queue.queue(() => this.refresh()).catch(() => { });
 	}
 
 	get groups(): readonly IWorkspaceGroup[] {

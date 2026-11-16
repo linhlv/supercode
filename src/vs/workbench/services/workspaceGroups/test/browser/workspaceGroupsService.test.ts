@@ -122,8 +122,7 @@ suite('WorkspaceGroupsService', () => {
 	}
 
 	async function created(service: WorkspaceGroupsService): Promise<WorkspaceGroupsService> {
-		// the initial read is asynchronous; a no-op mutation round-trips through the same queue
-		await service.moveFolder(URI.parse('file:///nothing'), undefined);
+		await service.whenReady;
 		return service;
 	}
 
@@ -340,6 +339,28 @@ suite('WorkspaceGroupsService', () => {
 		await writeFile(file, { folders: [{ path: '/srv' }], remoteAuthority: 'ssh-remote+box' });
 
 		await assert.rejects(service.importWorkspaceFile(file), /remote\.code-workspace/);
+	});
+
+	test('whenReady resolves after the initial read with the stored groups', async () => {
+		await seed([{ name: 'g', folders: [a] }]);
+		const service = create();
+		assert.strictEqual(service.groups.length, 0);
+		await service.whenReady;
+		assert.deepStrictEqual(service.groups.map(g => g.name), ['g']);
+	});
+
+	test('whenReady resolves immediately in an inactive window', async () => {
+		state = WorkbenchState.FOLDER;
+		setFolders([a]);
+		const service = create();
+		await service.whenReady;
+		assert.deepStrictEqual(service.groups, []);
+	});
+
+	test('whenReady resolves when the initial read fails', async () => {
+		const service = create(); // the workspace file does not exist
+		await service.whenReady;
+		assert.deepStrictEqual(service.groups, []);
 	});
 
 	test('is empty and inert in a remote window', async () => {

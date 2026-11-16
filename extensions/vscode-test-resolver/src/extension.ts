@@ -478,6 +478,10 @@ export function activate(context: vscode.ExtensionContext) {
 			await exited;
 		}
 	}));
+	context.subscriptions.push(vscode.commands.registerCommand('vscode-testresolver.restoreServer', (authority: string) => {
+		// Undoes `killServer`: the authority resolves again and starts a new server
+		killedAuthorities.delete(authority);
+	}));
 	context.subscriptions.push(vscode.commands.registerCommand('vscode-testresolver.showLog', () => {
 		if (outputChannel) {
 			outputChannel.show();

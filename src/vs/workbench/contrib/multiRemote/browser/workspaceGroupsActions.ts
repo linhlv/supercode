@@ -11,6 +11,7 @@ import { localize, localize2 } from '../../../../nls.js';
 import { Action2, IAction2Options, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+import { IsWebContext } from '../../../../platform/contextkey/common/contextkeys.js';
 import { IDialogService, IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
@@ -28,25 +29,29 @@ import { ExplorerGroupContext, ExplorerRootContext, FilesExplorerFocusedContext,
 import { ITerminalService } from '../../terminal/browser/terminal.js';
 import { IHostDemandService } from './hostDemand.js';
 
-const IsLocalWindow = RemoteNameContext.isEqualTo('');
+/** Groups exist only in a local desktop window. */
+const IsLocalWindow = ContextKeyExpr.and(RemoteNameContext.isEqualTo(''), IsWebContext.toNegated());
 
 /** The command contributed by the SSH extension that picks a host and then calls `AddRemoteFolderToWorkspaceAction`. */
 const ADD_SSH_FOLDER_COMMAND = 'remote-ssh.addFolderToWorkspace';
 
-/** Resolves the group a command acts on: a group resource or name passed as argument, else the focused Explorer item. */
-function resolveGroupName(accessor: ServicesAccessor, arg: unknown): string | undefined {
+/**
+ * Resolves the group a command acts on: a group resource or name passed as argument, else the focused Explorer item.
+ * Commands fetch every service before their first `await`: the accessor expires once `run` yields.
+ */
+function resolveGroupName(explorerService: IExplorerService, arg: unknown): string | undefined {
 	if (typeof arg === 'string') {
 		return arg;
 	}
 	if (URI.isUri(arg)) {
 		return groupNameOf(arg);
 	}
-	const focused = accessor.get(IExplorerService).getContext(true)[0];
+	const focused = explorerService.getContext(true)[0];
 	return isExplorerGroupItem(focused) ? focused.groupName : undefined;
 }
 
-function notifyError(accessor: ServicesAccessor, error: unknown): void {
-	accessor.get(INotificationService).error(getErrorMessage(error));
+function notifyError(notificationService: INotificationService, error: unknown): void {
+	notificationService.error(getErrorMessage(error));
 }
 
 /** Shared registration of a command of the group context menu. */
@@ -87,6 +92,14 @@ export class AddWorkspaceAction extends Action2 {
 		const groupsService = accessor.get(IWorkspaceGroupsService);
 		const quickInputService = accessor.get(IQuickInputService);
 		const fileDialogService = accessor.get(IFileDialogService);
+		const notificationService = accessor.get(INotificationService);
+		const labelService = accessor.get(ILabelService);
+		const importFile = async (file: URI) => {
+			const result = await groupsService.importWorkspaceFile(file);
+			if (result.skipped.length) {
+				notificationService.info(localize('workspaceGroups.skipped', "These folders are already in the workspace and were skipped: {0}", result.skipped.map(uri => labelService.getUriLabel(uri)).join(', ')));
+			}
+		};
 
 		try {
 			if (typeof args?.name === 'string') {
@@ -94,7 +107,7 @@ export class AddWorkspaceAction extends Action2 {
 				return;
 			}
 			if (URI.isUri(args?.file)) {
-				await this.importFile(accessor, args.file);
+				await importFile(args.file);
 				return;
 			}
 
@@ -111,7 +124,7 @@ export class AddWorkspaceAction extends Action2 {
 					filters: [{ name: localize('workspaceGroups.workspaceFilter', "Workspace"), extensions: ['code-workspace'] }]
 				});
 				if (picked?.length) {
-					await this.importFile(accessor, picked[0]);
+					await importFile(picked[0]);
 				}
 			} else if (choice === newItem) {
 				const name = await quickInputService.input({
@@ -123,15 +136,7 @@ export class AddWorkspaceAction extends Action2 {
 				}
 			}
 		} catch (error) {
-			notifyError(accessor, error);
-		}
-	}
-
-	private async importFile(accessor: ServicesAccessor, file: URI): Promise<void> {
-		const result = await accessor.get(IWorkspaceGroupsService).importWorkspaceFile(file);
-		if (result.skipped.length) {
-			const labelService = accessor.get(ILabelService);
-			accessor.get(INotificationService).info(localize('workspaceGroups.skipped', "These folders are already in the workspace and were skipped: {0}", result.skipped.map(uri => labelService.getUriLabel(uri)).join(', ')));
+			notifyError(notificationService, error);
 		}
 	}
 }
@@ -143,12 +148,14 @@ export class AddFolderToGroupAction extends WorkspaceGroupAction {
 	}
 
 	override async run(accessor: ServicesAccessor, arg?: unknown): Promise<void> {
-		const name = resolveGroupName(accessor, arg);
+		const name = resolveGroupName(accessor.get(IExplorerService), arg);
 		if (name === undefined) {
 			return;
 		}
 		const fileDialogService = accessor.get(IFileDialogService);
 		const pathService = accessor.get(IPathService);
+		const groupsService = accessor.get(IWorkspaceGroupsService);
+		const notificationService = accessor.get(INotificationService);
 		try {
 			const folders = await fileDialogService.showOpenDialog({
 				title: localize('workspaceGroups.addFolderTitle', "Add Folder to Group"),
@@ -159,10 +166,10 @@ export class AddFolderToGroupAction extends WorkspaceGroupAction {
 				availableFileSystems: [pathService.defaultUriScheme]
 			});
 			if (folders?.length) {
-				await accessor.get(IWorkspaceGroupsService).addFolders(name, folders.map(uri => ({ uri })));
+				await groupsService.addFolders(name, folders.map(uri => ({ uri })));
 			}
 		} catch (error) {
-			notifyError(accessor, error);
+			notifyError(notificationService, error);
 		}
 	}
 }
@@ -174,16 +181,18 @@ export class AddSshFolderToGroupAction extends WorkspaceGroupAction {
 	}
 
 	override async run(accessor: ServicesAccessor, arg?: unknown): Promise<void> {
-		const name = resolveGroupName(accessor, arg);
+		const name = resolveGroupName(accessor.get(IExplorerService), arg);
 		if (name === undefined) {
 			return;
 		}
+		const commandService = accessor.get(ICommandService);
+		const notificationService = accessor.get(INotificationService);
 		// The focused group receives the folders that the SSH flow adds to the workspace
 		accessor.get(IWorkspaceGroupsService).setFocusedGroup(name);
 		try {
-			await accessor.get(ICommandService).executeCommand(ADD_SSH_FOLDER_COMMAND);
+			await commandService.executeCommand(ADD_SSH_FOLDER_COMMAND);
 		} catch (error) {
-			notifyError(accessor, error);
+			notifyError(notificationService, error);
 		}
 	}
 }
@@ -195,7 +204,7 @@ export class NewTerminalInGroupAction extends WorkspaceGroupAction {
 	}
 
 	override async run(accessor: ServicesAccessor, arg?: unknown): Promise<void> {
-		const name = resolveGroupName(accessor, arg);
+		const name = resolveGroupName(accessor.get(IExplorerService), arg);
 		const group = accessor.get(IWorkspaceGroupsService).groups.find(candidate => candidate.name === name);
 		if (!group) {
 			return;
@@ -203,10 +212,12 @@ export class NewTerminalInGroupAction extends WorkspaceGroupAction {
 		const terminalService = accessor.get(ITerminalService);
 		const labelService = accessor.get(ILabelService);
 		const contextService = accessor.get(IWorkspaceContextService);
+		const quickInputService = accessor.get(IQuickInputService);
+		const notificationService = accessor.get(INotificationService);
 
 		let cwd: URI | undefined = group.folders.length === 1 ? group.folders[0] : undefined;
 		if (!cwd) {
-			const picked = await accessor.get(IQuickInputService).pick(
+			const picked = await quickInputService.pick(
 				group.folders.map(folder => ({
 					label: contextService.getWorkspaceFolder(folder)?.name ?? labelService.getUriLabel(folder, { relative: true }),
 					description: labelService.getUriLabel(folder),
@@ -223,7 +234,7 @@ export class NewTerminalInGroupAction extends WorkspaceGroupAction {
 			await terminalService.revealActiveTerminal();
 			instance.focus();
 		} catch (error) {
-			notifyError(accessor, error);
+			notifyError(notificationService, error);
 		}
 	}
 }
@@ -239,13 +250,15 @@ export class RenameGroupAction extends WorkspaceGroupAction {
 	}
 
 	override async run(accessor: ServicesAccessor, arg?: unknown): Promise<void> {
-		const name = resolveGroupName(accessor, arg);
+		const name = resolveGroupName(accessor.get(IExplorerService), arg);
 		if (name === undefined) {
 			return;
 		}
 		const groupsService = accessor.get(IWorkspaceGroupsService);
+		const quickInputService = accessor.get(IQuickInputService);
+		const notificationService = accessor.get(INotificationService);
 		try {
-			const newName = await accessor.get(IQuickInputService).input({
+			const newName = await quickInputService.input({
 				value: name,
 				prompt: localize('workspaceGroups.renamePrompt', "New name of the group"),
 				validateInput: async value => validateGroupName(value, groupsService.groups.map(group => group.name), name)
@@ -254,7 +267,7 @@ export class RenameGroupAction extends WorkspaceGroupAction {
 				await groupsService.renameGroup(name, newName);
 			}
 		} catch (error) {
-			notifyError(accessor, error);
+			notifyError(notificationService, error);
 		}
 	}
 }
@@ -266,13 +279,16 @@ export class UngroupAction extends WorkspaceGroupAction {
 	}
 
 	override async run(accessor: ServicesAccessor, arg?: unknown): Promise<void> {
-		const name = resolveGroupName(accessor, arg);
-		if (name !== undefined) {
-			try {
-				await accessor.get(IWorkspaceGroupsService).removeGroup(name, true);
-			} catch (error) {
-				notifyError(accessor, error);
-			}
+		const name = resolveGroupName(accessor.get(IExplorerService), arg);
+		if (name === undefined) {
+			return;
+		}
+		const groupsService = accessor.get(IWorkspaceGroupsService);
+		const notificationService = accessor.get(INotificationService);
+		try {
+			await groupsService.removeGroup(name, true);
+		} catch (error) {
+			notifyError(notificationService, error);
 		}
 	}
 }
@@ -284,12 +300,15 @@ export class RemoveGroupAction extends WorkspaceGroupAction {
 	}
 
 	override async run(accessor: ServicesAccessor, arg?: unknown): Promise<void> {
-		const name = resolveGroupName(accessor, arg);
-		const group = accessor.get(IWorkspaceGroupsService).groups.find(candidate => candidate.name === name);
+		const name = resolveGroupName(accessor.get(IExplorerService), arg);
+		const groupsService = accessor.get(IWorkspaceGroupsService);
+		const dialogService = accessor.get(IDialogService);
+		const notificationService = accessor.get(INotificationService);
+		const group = groupsService.groups.find(candidate => candidate.name === name);
 		if (!group) {
 			return;
 		}
-		const confirmation = await accessor.get(IDialogService).confirm({
+		const confirmation = await dialogService.confirm({
 			type: 'warning',
 			message: localize('workspaceGroups.removeConfirm', "Remove the group '{0}' and its {1} folder(s) from the workspace?", group.name, group.folders.length),
 			detail: localize('workspaceGroups.removeDetail', "The folders are not deleted from disk. Use Ungroup to keep them in the workspace."),
@@ -299,9 +318,9 @@ export class RemoveGroupAction extends WorkspaceGroupAction {
 			return;
 		}
 		try {
-			await accessor.get(IWorkspaceGroupsService).removeGroup(group.name, false);
+			await groupsService.removeGroup(group.name, false);
 		} catch (error) {
-			notifyError(accessor, error);
+			notifyError(notificationService, error);
 		}
 	}
 }
@@ -333,6 +352,8 @@ export class MoveToGroupAction extends Action2 {
 			return;
 		}
 		const groupsService = accessor.get(IWorkspaceGroupsService);
+		const quickInputService = accessor.get(IQuickInputService);
+		const notificationService = accessor.get(INotificationService);
 		try {
 			if (args.length >= 2 && !Array.isArray(target)) {
 				await groupsService.moveFolder(folder, typeof target === 'string' ? target : undefined);
@@ -340,18 +361,34 @@ export class MoveToGroupAction extends Action2 {
 			}
 
 			const current = groupsService.getGroupOf(folder);
-			const items: (IQuickPickItem & { target: string | undefined })[] = groupsService.groups
+			const newGroup: IQuickPickItem = { label: localize('workspaceGroups.newGroup', "New Group…") };
+			const ungrouped: IQuickPickItem = { label: localize('workspaceGroups.ungrouped', "Ungrouped") };
+			const items: IQuickPickItem[] = groupsService.groups
 				.filter(group => group !== current && group.name !== current?.name)
-				.map(group => ({ label: group.name, target: group.name }));
+				.map(group => ({ label: group.name }));
+			items.push(newGroup);
 			if (current) {
-				items.push({ label: localize('workspaceGroups.ungrouped', "Ungrouped"), target: undefined });
+				items.push(ungrouped);
 			}
-			const picked = await accessor.get(IQuickInputService).pick(items, { placeHolder: localize('workspaceGroups.movePlaceholder', "Select the group to move the folder to") });
-			if (picked) {
-				await groupsService.moveFolder(folder, picked.target);
+			const picked = await quickInputService.pick(items, { placeHolder: localize('workspaceGroups.movePlaceholder', "Select the group to move the folder to") });
+			if (!picked) {
+				return;
+			}
+			if (picked === ungrouped) {
+				await groupsService.moveFolder(folder, undefined);
+			} else if (picked === newGroup) {
+				const name = await quickInputService.input({
+					prompt: localize('workspaceGroups.namePrompt', "Name of the new group"),
+					validateInput: async value => validateGroupName(value, groupsService.groups.map(group => group.name))
+				});
+				if (name !== undefined) {
+					await groupsService.moveFolder(folder, await groupsService.createGroup(name));
+				}
+			} else {
+				await groupsService.moveFolder(folder, picked.label);
 			}
 		} catch (error) {
-			notifyError(accessor, error);
+			notifyError(notificationService, error);
 		}
 	}
 }

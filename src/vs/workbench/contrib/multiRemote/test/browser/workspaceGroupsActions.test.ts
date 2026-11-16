@@ -8,6 +8,7 @@ import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IDialogService, IFileDialogService, IOpenDialogOptions } from '../../../../../platform/dialogs/common/dialogs.js';
+import { Action2 } from '../../../../../platform/actions/common/actions.js';
 import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
@@ -19,7 +20,7 @@ import { groupResource, IWorkspaceGroup, IWorkspaceGroupsService } from '../../.
 import { IExplorerService } from '../../../files/browser/files.js';
 import { ITerminalService } from '../../../terminal/browser/terminal.js';
 import { IHostDemandService } from '../../browser/hostDemand.js';
-import { AddSshFolderToGroupAction, AddWorkspaceAction, MoveToGroupAction, NewTerminalInGroupAction, RemoveGroupAction, RenameGroupAction, UngroupAction } from '../../browser/workspaceGroupsActions.js';
+import { AddFolderToGroupAction, AddSshFolderToGroupAction, AddWorkspaceAction, MoveToGroupAction, NewTerminalInGroupAction, RemoveGroupAction, RenameGroupAction, UngroupAction } from '../../browser/workspaceGroupsActions.js';
 
 suite('WorkspaceGroupsActions', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
@@ -33,6 +34,7 @@ suite('WorkspaceGroupsActions', () => {
 	let infos: string[];
 	let importResult: { groups: string[]; skipped: URI[] };
 	let importError: Error | undefined;
+	let mutationError: Error | undefined;
 	let pickAnswer: ((items: readonly IQuickPickItem[]) => IQuickPickItem | undefined) | undefined;
 	let pickedItems: string[];
 	let inputAnswer: string | undefined;
@@ -47,16 +49,41 @@ suite('WorkspaceGroupsActions', () => {
 		return { name, folders, collapsed: true };
 	}
 
-	function accessor(): ServicesAccessor {
+	/**
+	 * Runs an action like `IInstantiationService.invokeFunction` does: the accessor expires once
+	 * the synchronous part of `run` has returned, so a service fetched after an `await` throws.
+	 */
+	function run(action: Action2, ...args: unknown[]): Promise<void> {
+		let valid = true;
+		const services = createServices();
+		const accessor = {
+			get: (id: unknown) => {
+				if (!valid) {
+					throw new Error('service accessor is only valid during the invocation of its target method');
+				}
+				if (!services.has(id)) {
+					throw new Error('unexpected service');
+				}
+				return services.get(id);
+			}
+		} as unknown as ServicesAccessor;
+		try {
+			return Promise.resolve(action.run(accessor, ...args));
+		} finally {
+			valid = false;
+		}
+	}
+
+	function createServices(): Map<unknown, unknown> {
 		const services = new Map<unknown, unknown>([
 			[IWorkspaceGroupsService, {
 				get groups() { return groups; },
 				getGroupOf: (folder: URI) => groups.find(g => g.folders.some(f => f.toString() === folder.toString())),
 				createGroup: async (name: string) => { calls.push(`createGroup ${name}`); return name; },
 				importWorkspaceFile: async (file: URI) => { calls.push(`import ${file.toString()}`); if (importError) { throw importError; } return importResult; },
-				addFolders: async (name: string, folders: { uri: URI }[]) => { calls.push(`addFolders ${name} ${folders.map(f => f.uri.toString())}`); },
-				renameGroup: async (name: string, newName: string) => { calls.push(`rename ${name} ${newName}`); },
-				removeGroup: async (name: string, keep: boolean) => { calls.push(`remove ${name} keep=${keep}`); },
+				addFolders: async (name: string, folders: { uri: URI }[]) => { calls.push(`addFolders ${name} ${folders.map(f => f.uri.toString())}`); if (mutationError) { throw mutationError; } },
+				renameGroup: async (name: string, newName: string) => { calls.push(`rename ${name} ${newName}`); if (mutationError) { throw mutationError; } },
+				removeGroup: async (name: string, keep: boolean) => { calls.push(`remove ${name} keep=${keep}`); if (mutationError) { throw mutationError; } },
 				moveFolder: async (folder: URI, name: string | undefined) => { calls.push(`move ${folder.toString()} ${name}`); },
 				setFocusedGroup: (name: string | undefined) => { calls.push(`focus ${name}`); },
 				setCollapsed: (name: string, collapsed: boolean) => { calls.push(`collapsed ${name} ${collapsed}`); }
@@ -87,7 +114,7 @@ suite('WorkspaceGroupsActions', () => {
 			} as unknown as ITerminalService],
 			[IExplorerService, { getContext: () => [] } as Partial<IExplorerService>]
 		]);
-		return { get: (id: unknown) => { if (!services.has(id)) { throw new Error('unexpected service'); } return services.get(id); } } as unknown as ServicesAccessor;
+		return services;
 	}
 
 	setup(() => {
@@ -97,6 +124,7 @@ suite('WorkspaceGroupsActions', () => {
 		infos = [];
 		importResult = { groups: ['shop'], skipped: [] };
 		importError = undefined;
+		mutationError = undefined;
 		pickAnswer = undefined;
 		pickedItems = [];
 		inputAnswer = undefined;
@@ -109,26 +137,26 @@ suite('WorkspaceGroupsActions', () => {
 	});
 
 	test('add with a name creates an empty group', async () => {
-		await new AddWorkspaceAction().run(accessor(), { name: 'Backend' });
+		await run(new AddWorkspaceAction(), { name: 'Backend' });
 		assert.deepStrictEqual({ calls, errors }, { calls: ['createGroup Backend'], errors: [] });
 	});
 
 	test('add with a file imports and reports skipped folders', async () => {
 		importResult = { groups: ['shop'], skipped: [a] };
 		const file = URI.parse('file:///x/shop.code-workspace');
-		await new AddWorkspaceAction().run(accessor(), { file });
+		await run(new AddWorkspaceAction(), { file });
 		assert.deepStrictEqual({ calls, infos: infos.map(i => i.includes('/a')) }, { calls: [`import ${file.toString()}`], infos: [true] });
 	});
 
 	test('add through the picker imports the chosen file and creates a named group', async () => {
 		dialogResult = [URI.parse('file:///x/shop.code-workspace')];
 		pickAnswer = items => items[0];
-		await new AddWorkspaceAction().run(accessor());
+		await run(new AddWorkspaceAction());
 		const imported = { calls: [...calls], pickedItems: [...pickedItems], filters: openDialogs[0].filters };
 		calls = [];
 		pickAnswer = items => items[1];
 		inputAnswer = 'Team';
-		await new AddWorkspaceAction().run(accessor());
+		await run(new AddWorkspaceAction());
 		assert.deepStrictEqual({ imported, created: calls, validation: inputValidation.map(Boolean) }, {
 			imported: { calls: ['import file:///x/shop.code-workspace'], pickedItems: ['Import .code-workspace File…', 'New Empty Group…'], filters: [{ name: 'Workspace', extensions: ['code-workspace'] }] },
 			created: ['createGroup Team'],
@@ -138,51 +166,80 @@ suite('WorkspaceGroupsActions', () => {
 
 	test('add rejects a remote workspace file with a message', async () => {
 		importError = new Error('\'x.code-workspace\' was saved from a remote window and cannot be imported.');
-		await new AddWorkspaceAction().run(accessor(), { file: URI.parse('file:///x.code-workspace') });
+		await run(new AddWorkspaceAction(), { file: URI.parse('file:///x.code-workspace') });
 		assert.deepStrictEqual({ errors, infos }, { errors: [importError.message], infos: [] });
 	});
 
 	test('rename validates the name', async () => {
 		inputAnswer = 'renamed';
-		await new RenameGroupAction().run(accessor(), groupResource('g'));
+		await run(new RenameGroupAction(), groupResource('g'));
 		// '' is empty, 'taken' only clashes once such a group exists
 		groups.push(group('taken'));
 		inputValidation = [];
-		await new RenameGroupAction().run(accessor(), groupResource('g'));
+		await run(new RenameGroupAction(), groupResource('g'));
 		assert.deepStrictEqual({ calls, validation: inputValidation.map(Boolean) }, { calls: ['rename g renamed', 'rename g renamed'], validation: [true, true, false] });
 	});
 
 	test('remove asks for confirmation and removes the roots', async () => {
 		confirmed = false;
-		await new RemoveGroupAction().run(accessor(), groupResource('g'));
+		await run(new RemoveGroupAction(), groupResource('g'));
 		confirmed = true;
-		await new RemoveGroupAction().run(accessor(), groupResource('g'));
+		await run(new RemoveGroupAction(), groupResource('g'));
 		assert.deepStrictEqual({ calls, confirmCalls }, { calls: ['remove g keep=false'], confirmCalls: 2 });
 	});
 
 	test('ungroup keeps the roots', async () => {
-		await new UngroupAction().run(accessor(), 'g');
-		await new UngroupAction().run(accessor(), groupResource('h'));
+		await run(new UngroupAction(), 'g');
+		await run(new UngroupAction(), groupResource('h'));
 		assert.deepStrictEqual(calls, ['remove g keep=true', 'remove h keep=true']);
 	});
 
 	test('moveTo moves a root', async () => {
 		const action = new MoveToGroupAction();
-		await action.run(accessor(), a, 'h');
-		await action.run(accessor(), a, undefined);
+		await run(action, a, 'h');
+		await run(action, a, undefined);
 		pickAnswer = items => items[0];
-		await action.run(accessor(), a, [a]);
-		assert.deepStrictEqual({ calls, pickedItems }, { calls: [`move ${a} h`, `move ${a} undefined`, `move ${a} h`], pickedItems: ['h', 'Ungrouped'] });
+		await run(action, a, [a]);
+		assert.deepStrictEqual({ calls, pickedItems }, { calls: [`move ${a} h`, `move ${a} undefined`, `move ${a} h`], pickedItems: ['h', 'New Group…', 'Ungrouped'] });
+	});
+
+	test('moveTo offers a new group, also in a window without groups', async () => {
+		groups = [];
+		pickAnswer = items => items.find(item => item.label === 'New Group…');
+		inputAnswer = 'Fresh';
+		await run(new MoveToGroupAction(), a, [a]);
+		assert.deepStrictEqual({ calls, pickedItems, validation: inputValidation.map(Boolean) }, {
+			calls: ['createGroup Fresh', `move ${a} Fresh`],
+			pickedItems: ['New Group…'],
+			validation: [true, false, false]
+		});
+	});
+
+	test('addFolder adds the picked folders to the group', async () => {
+		dialogResult = [URI.parse('file:///c')];
+		await run(new AddFolderToGroupAction(), groupResource('h'));
+		assert.deepStrictEqual({ calls, errors, fileSystems: openDialogs[0].availableFileSystems }, { calls: ['addFolders h file:///c'], errors: [], fileSystems: ['file'] });
+	});
+
+	test('failures after the first await are reported', async () => {
+		mutationError = new Error('boom');
+		dialogResult = [URI.parse('file:///c')];
+		inputAnswer = 'renamed';
+		await run(new AddFolderToGroupAction(), groupResource('h'));
+		await run(new RenameGroupAction(), groupResource('g'));
+		await run(new RemoveGroupAction(), groupResource('g'));
+		await run(new UngroupAction(), 'g');
+		assert.deepStrictEqual(errors, ['boom', 'boom', 'boom', 'boom']);
 	});
 
 	test('addSsh focuses the group before starting the SSH host flow', async () => {
-		await new AddSshFolderToGroupAction().run(accessor(), groupResource('h'));
+		await run(new AddSshFolderToGroupAction(), groupResource('h'));
 		assert.deepStrictEqual(calls, ['focus h', 'command remote-ssh.addFolderToWorkspace']);
 	});
 
 	test('newTerminal offers only the group\'s roots', async () => {
 		pickAnswer = items => items[1];
-		await new NewTerminalInGroupAction().run(accessor(), groupResource('g'));
+		await run(new NewTerminalInGroupAction(), groupResource('g'));
 		assert.deepStrictEqual({ pickedItems, terminalCwds: terminalCwds.map(String) }, { pickedItems: ['/a', '/b'], terminalCwds: [b.toString()] });
 	});
 

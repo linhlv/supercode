@@ -170,6 +170,16 @@ suite('MultiRemoteService', () => {
 		assert.deepStrictEqual({ failed, created: service.created.length, state: service.getState('ssh-remote+a') }, { failed: 'failed', created: 2, state: 'connected' });
 	});
 
+	test('reconnect drops a connection stuck reconnecting and connects fresh', async () => {
+		// The host's server may be gone, so retrying the old connection never succeeds
+		const { service, states } = create();
+		await service.connect('ssh-remote+a');
+		service.created[0].stateEmitter.fire(new ConnectionLostEvent('t', 0));
+		states.length = 0;
+		await service.reconnect('ssh-remote+a');
+		assert.deepStrictEqual({ states, created: service.created.length, oldDisposed: service.created[0].disposed }, { states: ['disconnected', 'connecting', 'connected'], created: 2, oldDisposed: true });
+	});
+
 	test('getEnvironment delegates to the primary for undefined', async () => {
 		const { service, primaryEnvironment } = create();
 		assert.strictEqual(await service.getEnvironment(undefined), primaryEnvironment);

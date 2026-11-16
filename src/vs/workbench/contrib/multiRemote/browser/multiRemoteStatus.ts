@@ -133,7 +133,7 @@ export class MultiRemoteStatusContribution extends Disposable implements IWorkbe
 			picker.hide();
 			switch (button) {
 				case MultiRemoteStatusContribution.RECONNECT_BUTTON:
-					this.multiRemoteService.connect(authority).catch(() => { /* failures are surfaced through the host state */ });
+					this.multiRemoteService.reconnect(authority).catch(() => { /* failures are surfaced through the host state */ });
 					break;
 				case MultiRemoteStatusContribution.DISCONNECT_BUTTON:
 					this.multiRemoteService.disconnect(authority).catch(error => this.notificationService.error(getErrorMessage(error)));

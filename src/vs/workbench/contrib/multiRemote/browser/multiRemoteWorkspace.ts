@@ -203,7 +203,7 @@ export class ReconnectHostAction extends Action2 {
 	override async run(accessor: ServicesAccessor, resource?: URI): Promise<void> {
 		const multiRemoteService = accessor.get(IMultiRemoteService);
 		if (resource?.scheme === Schemas.vscodeRemote && resource.authority) {
-			await multiRemoteService.connect(resource.authority).catch(() => { });
+			await multiRemoteService.reconnect(resource.authority).catch(() => { });
 		}
 	}
 }

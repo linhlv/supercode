@@ -9,6 +9,7 @@ import { IDisposable, toDisposable } from '../../../../../base/common/lifecycle.
 import { Schemas } from '../../../../../base/common/network.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
+import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { IWorkspaceTrustManagementService } from '../../../../../platform/workspace/common/workspaceTrust.js';
 import { IWorkspaceContextService, IWorkspaceFolder, IWorkspaceFoldersChangeEvent } from '../../../../../platform/workspace/common/workspace.js';
@@ -168,5 +169,16 @@ suite('MultiRemoteWorkspace', () => {
 		const menu = new ReconnectHostAction().desc.menu;
 		const when = (Array.isArray(menu) ? menu[0] : menu)?.when?.serialize();
 		assert.ok(when?.includes(`remoteName == ''`), when);
+	});
+
+	test('Reconnect Host reconnects the host of the root, even one stuck reconnecting', async () => {
+		const calls: string[] = [];
+		const multiRemoteService = {
+			connect: async (authority: string) => { calls.push(`connect ${authority}`); return undefined!; },
+			reconnect: async (authority: string) => { calls.push(`reconnect ${authority}`); return undefined!; }
+		} as Partial<IMultiRemoteService> as IMultiRemoteService;
+		const accessor = { get: () => multiRemoteService } as Partial<ServicesAccessor> as ServicesAccessor;
+		await new ReconnectHostAction().run(accessor, URI.from({ scheme: Schemas.vscodeRemote, authority: 'ssh-remote+a', path: '/app' }));
+		assert.deepStrictEqual(calls, ['reconnect ssh-remote+a']);
 	});
 });

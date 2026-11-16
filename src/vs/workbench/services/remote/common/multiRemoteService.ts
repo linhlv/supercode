@@ -48,6 +48,8 @@ export interface IMultiRemoteService {
 
 	/** Idempotent; concurrent calls share one connection attempt. Starts a fresh connection when failed or disconnected. */
 	connect(authority: string): Promise<IRemoteHostConnection>;
+	/** Like `connect`, but first drops a connection that is stuck reconnecting, so that the host is connected fresh. */
+	reconnect(authority: string): Promise<IRemoteHostConnection>;
 	disconnect(authority: string): Promise<void>;
 
 	/** True iff enabled, the authority is defined and differs from the primary authority. */

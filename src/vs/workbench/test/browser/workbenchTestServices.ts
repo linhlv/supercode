@@ -2052,6 +2052,7 @@ export class TestMultiRemoteService implements IMultiRemoteService {
 	getState(authority: string): RemoteHostState | undefined { return undefined; }
 	getConnected(authority: string): IRemoteHostConnection | undefined { return undefined; }
 	async connect(authority: string): Promise<IRemoteHostConnection> { throw new Error('Not supported'); }
+	async reconnect(authority: string): Promise<IRemoteHostConnection> { throw new Error('Not supported'); }
 	async disconnect(authority: string): Promise<void> { }
 	isSecondary(authority: string | undefined): boolean { return false; }
 	getEnvironment(authority: string | undefined): Promise<IRemoteAgentEnvironment | null> { return this._getRemoteAgentService().getEnvironment(); }

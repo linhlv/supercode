@@ -158,6 +158,18 @@ export class MultiRemoteService extends Disposable implements IMultiRemoteServic
 		}));
 	}
 
+	reconnect(authority: string): Promise<IRemoteHostConnection> {
+		const existing = this._hosts.get(authority.toLowerCase());
+		if (existing && !existing.connectPromise && existing.status.state === RemoteHostState.Reconnecting) {
+			// Its server may be gone, in which case retrying never succeeds. The socket is already lost,
+			// so there is nothing to end gracefully: report the host disconnected and drop the connection.
+			existing.host = undefined;
+			this._setState(existing, RemoteHostState.Disconnected);
+			existing.disposables.dispose();
+		}
+		return this.connect(authority);
+	}
+
 	async disconnect(authority: string): Promise<void> {
 		const entry = this._hosts.get(authority.toLowerCase());
 		if (!entry) {

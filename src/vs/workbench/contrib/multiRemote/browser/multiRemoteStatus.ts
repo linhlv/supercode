@@ -14,6 +14,7 @@ import { ILabelService } from '../../../../platform/label/common/label.js';
 import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { IQuickInputButton, IQuickInputService, IQuickPickItem, IQuickPickSeparator } from '../../../../platform/quickinput/common/quickInput.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IMultiRemoteService, RemoteHostState } from '../../../services/remote/common/multiRemoteService.js';
 import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
@@ -55,7 +56,8 @@ export class MultiRemoteStatusContribution extends Disposable implements IWorkbe
 		@ILabelService private readonly labelService: ILabelService,
 		@ICommandService private readonly commandService: ICommandService,
 		@INotificationService private readonly notificationService: INotificationService,
-		@IHostDemandService private readonly hostDemandService: IHostDemandService
+		@IHostDemandService private readonly hostDemandService: IHostDemandService,
+		@IWorkspaceTrustManagementService private readonly workspaceTrustManagementService: IWorkspaceTrustManagementService
 	) {
 		super();
 
@@ -85,7 +87,10 @@ export class MultiRemoteStatusContribution extends Disposable implements IWorkbe
 		}
 
 		// Only wanted hosts are counted; idle hosts and hosts kept for a terminal or a dialog are listed in the Hosts picker
-		const hosts: IHostRow[] = this.hostDemandService.getWantedHosts().map(authority => this.statusOf(authority));
+		// An untrusted window connects nothing on its own, so it counts the hosts that were touched, as before
+		const hosts: IHostRow[] = this.workspaceTrustManagementService.isWorkspaceTrusted()
+			? this.hostDemandService.getWantedHosts().map(authority => this.statusOf(authority))
+			: this.multiRemoteService.getHosts().filter(host => this.hostDemandService.hasRoots(host.authority));
 		const connected = hosts.filter(host => host.state === RemoteHostState.Connected).length;
 		const text = `$(remote) ${connected}/${hosts.length}`;
 		const tooltip = hosts.map(host => this.describe(host)).join('\n') || localize('multiRemote.noHosts', "No remote hosts");

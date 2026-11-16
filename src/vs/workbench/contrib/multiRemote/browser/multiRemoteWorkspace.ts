@@ -45,6 +45,8 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 	private readonly idleTimers = this._register(new DisposableMap<string>());
 	/** Lower-cased authorities with a connect call in flight. */
 	private readonly connecting = new Set<string>();
+	/** Lower-cased authorities this contribution disconnected for being idle; only those reconnect on their own. */
+	private readonly idleDisconnected = new Set<string>();
 
 	constructor(
 		@IMultiRemoteService private readonly multiRemoteService: IMultiRemoteService,
@@ -78,11 +80,15 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 		}));
 		this._register(this.contextService.onDidChangeWorkspaceFolders(e => {
 			this.disconnectUnusedHosts(e.removed);
+			this.connectAddedHosts(e.added);
 			this.update();
 		}));
 		this._register(this.groupsService.onDidChange(() => this._onDidChangeDecorations.fire(this.groupsService.groups.map(group => groupResource(group.name)))));
 		this._register(this.multiRemoteService.onDidChangeHostState(status => {
 			this.errors.set(status.authority.toLowerCase(), status.error);
+			if (status.state === RemoteHostState.Connecting || status.state === RemoteHostState.Connected) {
+				this.idleDisconnected.delete(status.authority.toLowerCase());
+			}
 			if (status.state === RemoteHostState.Connected) {
 				this.onDidConnect(status.authority);
 			}
@@ -116,10 +122,9 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 			const state = this.multiRemoteService.getState(authority);
 			if (this.hostDemandService.isWanted(authority)) {
 				this.idleTimers.deleteAndDispose(key);
-				if (trusted && (state === undefined || state === RemoteHostState.Disconnected) && !this.connecting.has(key)) {
-					this.connecting.add(key);
-					// Failures are surfaced through the host state
-					this.multiRemoteService.connect(authority).catch(() => { }).finally(() => this.connecting.delete(key));
+				// A manual disconnect sticks: only untouched hosts and hosts disconnected for being idle connect on their own
+				if (trusted && (state === undefined || (state === RemoteHostState.Disconnected && this.idleDisconnected.has(key)))) {
+					this.connectHost(authority);
 				}
 			} else if (state === RemoteHostState.Connecting || state === RemoteHostState.Connected || state === RemoteHostState.Reconnecting) {
 				if (!this.idleTimers.has(key)) {
@@ -134,6 +139,38 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 				this.idleTimers.deleteAndDispose(key);
 			}
 		}
+		for (const key of [...this.idleDisconnected]) {
+			if (!withRoots.has(key)) {
+				this.idleDisconnected.delete(key);
+			}
+		}
+	}
+
+	private connectHost(authority: string): void {
+		const key = authority.toLowerCase();
+		if (this.connecting.has(key)) {
+			return;
+		}
+		this.connecting.add(key);
+		// Failures are surfaced through the host state
+		this.multiRemoteService.connect(authority).catch(() => { }).finally(() => this.connecting.delete(key));
+	}
+
+	/** Adding a root retries a failed host, unlike expanding a group; an untrusted workspace connects nothing. */
+	private connectAddedHosts(added: readonly IWorkspaceFolder[]): void {
+		if (!this.workspaceTrustManagementService.isWorkspaceTrusted()) {
+			return;
+		}
+		for (const folder of added) {
+			const authority = folder.uri.authority;
+			if (folder.uri.scheme !== Schemas.vscodeRemote || !authority || !this.hostDemandService.isWanted(authority)) {
+				continue;
+			}
+			const state = this.multiRemoteService.getState(authority);
+			if (state === undefined || state === RemoteHostState.Failed || state === RemoteHostState.Disconnected) {
+				this.connectHost(authority);
+			}
+		}
 	}
 
 	private startIdleTimer(authority: string): void {
@@ -144,6 +181,7 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 			const state = this.multiRemoteService.getState(authority);
 			const active = state === RemoteHostState.Connecting || state === RemoteHostState.Connected || state === RemoteHostState.Reconnecting;
 			if (active && this.hostDemandService.hasRoots(authority) && !this.hostDemandService.isWanted(authority)) {
+				this.idleDisconnected.add(key);
 				this.multiRemoteService.disconnect(authority).catch(() => { /* surfaced through the host state */ });
 			}
 		}, delay * 1000));

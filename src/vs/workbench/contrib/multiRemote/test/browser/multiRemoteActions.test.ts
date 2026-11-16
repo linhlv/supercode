@@ -21,6 +21,7 @@ import { IWorkspaceContextService, IWorkspaceFolder, IWorkspaceFoldersChangeEven
 import { IMultiRemoteService, IRemoteHostConnection, IRemoteHostStatus, RemoteHostState } from '../../../../services/remote/common/multiRemoteService.js';
 import { IStatusbarEntry, IStatusbarEntryAccessor, IStatusbarService } from '../../../../services/statusbar/browser/statusbar.js';
 import { IWorkspaceEditingService } from '../../../../services/workspaces/common/workspaceEditing.js';
+import { IWorkspaceTrustManagementService } from '../../../../../platform/workspace/common/workspaceTrust.js';
 import { IHostDemandService } from '../../browser/hostDemand.js';
 import { AddRemoteFolderToWorkspaceAction } from '../../browser/multiRemoteActions.js';
 import { MultiRemoteStatusContribution } from '../../browser/multiRemoteStatus.js';
@@ -138,6 +139,7 @@ suite('MultiRemoteActions', () => {
 		let stateEmitter: Emitter<IRemoteHostStatus>;
 		let foldersEmitter: Emitter<IWorkspaceFoldersChangeEvent>;
 		let wantedAuthorities: string[] | undefined;
+		let trusted: boolean;
 		let statusConnectCalls: string[];
 		let pickerItems: { authority?: string; description?: string; buttons?: IQuickInputButton[] }[];
 		let triggerButton: ((item: { authority?: string }, button: IQuickInputButton) => void) | undefined;
@@ -193,7 +195,8 @@ suite('MultiRemoteActions', () => {
 					hasRoots: (authority: string) => folders.some(f => f.uri.authority.toLowerCase() === authority.toLowerCase()),
 					getRootHosts: rootHosts,
 					getWantedHosts: () => wantedAuthorities ?? rootHosts()
-				} as Partial<IHostDemandService> as IHostDemandService));
+				} as Partial<IHostDemandService> as IHostDemandService,
+				{ isWorkspaceTrusted: () => trusted } as Partial<IWorkspaceTrustManagementService> as IWorkspaceTrustManagementService));
 		}
 
 		setup(() => {
@@ -204,9 +207,17 @@ suite('MultiRemoteActions', () => {
 			entry = undefined;
 			entryId = undefined;
 			wantedAuthorities = undefined;
+			trusted = true;
 			statusConnectCalls = [];
 			pickerItems = [];
 			triggerButton = undefined;
+		});
+
+		test('untrusted window with two never-connected remote roots shows no count change from before', () => {
+			trusted = false;
+			folders = [remoteFolder('ssh-remote+a'), remoteFolder('ssh-remote+b')];
+			create();
+			assert.strictEqual(entry?.text, '$(remote) 0/0');
 		});
 
 		test('Hosts n/m counts wanted hosts', () => {

@@ -219,14 +219,37 @@ suite('MultiRemoteWorkspace', () => {
 		assert.deepStrictEqual(connectCalls, ['ssh-remote+a', 'ssh-remote+b']);
 	});
 
-	test('reconnects a wanted disconnected host but not a failed one', () => {
-		folders = [folder('ssh-remote+a', '/one', 0), folder('ssh-remote+b', '/two', 1)];
-		wanted = new Set();
-		states.set('ssh-remote+a', RemoteHostState.Disconnected);
-		states.set('ssh-remote+b', RemoteHostState.Failed);
+	test('a manual disconnect of a wanted host sticks across demand changes', () => {
+		folders = [folder('ssh-remote+a', '/one', 0)];
+		states.set('ssh-remote+a', RemoteHostState.Connected);
 		create();
-		wanted.add('ssh-remote+a').add('ssh-remote+b');
+		states.set('ssh-remote+a', RemoteHostState.Disconnected);
+		stateEmitter.fire({ authority: 'ssh-remote+a', state: RemoteHostState.Disconnected });
 		demandEmitter.fire();
+		demandEmitter.fire();
+		assert.deepStrictEqual(connectCalls, []);
+	});
+
+	test('an idle-disconnected host reconnects when wanted again', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		folders = [folder('ssh-remote+a', '/one', 0)];
+		states.set('ssh-remote+a', RemoteHostState.Connected);
+		create();
+		wanted = new Set();
+		demandEmitter.fire();
+		await timeout(300_000);
+		states.set('ssh-remote+a', RemoteHostState.Disconnected);
+		stateEmitter.fire({ authority: 'ssh-remote+a', state: RemoteHostState.Disconnected });
+		wanted.add('ssh-remote+a');
+		demandEmitter.fire();
+		assert.deepStrictEqual({ disconnectCalls, connectCalls }, { disconnectCalls: ['ssh-remote+a'], connectCalls: ['ssh-remote+a'] });
+	}));
+
+	test('adding a root retries a failed host', () => {
+		states.set('ssh-remote+a', RemoteHostState.Failed);
+		create();
+		const added = folder('ssh-remote+a', '/x', 0);
+		folders = [added];
+		foldersEmitter.fire({ added: [added], removed: [], changed: [] });
 		assert.deepStrictEqual(connectCalls, ['ssh-remote+a']);
 	});
 

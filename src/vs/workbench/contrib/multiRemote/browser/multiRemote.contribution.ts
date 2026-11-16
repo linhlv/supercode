@@ -66,6 +66,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 			type: 'number',
 			default: 300,
 			minimum: 0,
+			maximum: 2000000,
 			description: localize('multiRemote.idleDisconnectDelay', "Seconds an SSH host stays connected after only collapsed workspace groups use it.")
 		}
 	}

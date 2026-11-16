@@ -30,6 +30,11 @@ import { ExplorerRootContext } from '../../files/common/files.js';
 import { IExplorerService } from '../../files/browser/files.js';
 import { IHostDemandService } from './hostDemand.js';
 
+/** Default of `multiRemote.idleDisconnectDelay`, in seconds. */
+const DEFAULT_IDLE_DISCONNECT_DELAY = 300;
+/** Longest delay a timer supports; longer ones fire at once. */
+const MAX_TIMEOUT = 2 ** 31 - 1;
+
 /**
  * Connects the remote hosts the window wants in the background, disconnects hosts that only
  * collapsed groups use once they were idle for a while, refreshes the workspace when a host
@@ -93,6 +98,8 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 				this.onDidConnect(status.authority);
 			}
 			this._onDidChangeDecorations.fire([...this.getRoots(status.authority).map(folder => folder.uri), ...this.getGroupResources(status.authority)]);
+			// A host that becomes active while no one wants it starts its idle timer
+			this.update();
 		}));
 	}
 
@@ -175,7 +182,6 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 
 	private startIdleTimer(authority: string): void {
 		const key = authority.toLowerCase();
-		const delay = Math.max(0, Number(this.settingsService.getValue('multiRemote.idleDisconnectDelay') ?? 300));
 		this.idleTimers.set(key, disposableTimeout(() => {
 			this.idleTimers.deleteAndDispose(key);
 			const state = this.multiRemoteService.getState(authority);
@@ -184,7 +190,14 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 				this.idleDisconnected.add(key);
 				this.multiRemoteService.disconnect(authority).catch(() => { /* surfaced through the host state */ });
 			}
-		}, delay * 1000));
+		}, this.getIdleDelay()));
+	}
+
+	/** The idle delay in milliseconds: the default for a value that is not a number, at most what a timer supports. */
+	private getIdleDelay(): number {
+		const value = this.settingsService.getValue<unknown>('multiRemote.idleDisconnectDelay');
+		const seconds = typeof value === 'number' && !isNaN(value) ? value : DEFAULT_IDLE_DISCONNECT_DELAY;
+		return Math.min(Math.max(0, seconds) * 1000, MAX_TIMEOUT);
 	}
 
 	/** Disconnects the hosts of removed roots that have no root and no terminal left. */

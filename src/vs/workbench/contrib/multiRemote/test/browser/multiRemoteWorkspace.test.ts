@@ -288,6 +288,43 @@ suite('MultiRemoteWorkspace', () => {
 		assert.deepStrictEqual({ disconnectCalls, connectCalls }, { disconnectCalls: [], connectCalls: [] });
 	}));
 
+	test('an invalid idle delay falls back to the default and a huge one is clamped', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		folders = [folder('ssh-remote+a', '/one', 0), folder('ssh-remote+b', '/two', 1)];
+		states.set('ssh-remote+a', RemoteHostState.Connected);
+		idleDelay = NaN;
+		create();
+		wanted = new Set();
+		demandEmitter.fire();
+		await timeout(299_000);
+		const invalidEarly = [...disconnectCalls];
+		await timeout(1_000);
+		const invalidLate = [...disconnectCalls];
+		states.set('ssh-remote+a', RemoteHostState.Disconnected);
+
+		states.set('ssh-remote+b', RemoteHostState.Connected);
+		idleDelay = 1e12;
+		stateEmitter.fire({ authority: 'ssh-remote+b', state: RemoteHostState.Connected });
+		await timeout(1_000_000_000);
+		const hugeEarly = disconnectCalls.length;
+		await timeout(2 ** 31);
+		assert.deepStrictEqual({ invalidEarly, invalidLate, hugeEarly, hugeLate: disconnectCalls }, {
+			invalidEarly: [],
+			invalidLate: ['ssh-remote+a'],
+			hugeEarly: 1,
+			hugeLate: ['ssh-remote+a', 'ssh-remote+b']
+		});
+	}));
+
+	test('a host that becomes active while unwanted gets its idle timer', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+		folders = [folder('ssh-remote+a', '/one', 0)];
+		wanted = new Set();
+		create();
+		states.set('ssh-remote+a', RemoteHostState.Connected);
+		stateEmitter.fire({ authority: 'ssh-remote+a', state: RemoteHostState.Connected });
+		await timeout(300_000);
+		assert.deepStrictEqual(disconnectCalls, ['ssh-remote+a']);
+	}));
+
 	test('a host without roots used only by a terminal is never idle-disconnected', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
 		folders = [];
 		terminalAuthorities = ['ssh-remote+t'];

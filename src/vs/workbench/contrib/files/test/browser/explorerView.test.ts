@@ -15,12 +15,12 @@ import * as dom from '../../../../../base/browser/dom.js';
 import { DisposableStore, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { provideDecorations } from '../../browser/views/explorerDecorationsProvider.js';
 import { TestConfigurationService } from '../../../../../platform/configuration/test/common/testConfigurationService.js';
-import { NullFilesConfigurationService, TestFileService } from '../../../../test/common/workbenchTestServices.js';
+import { NullFilesConfigurationService, TestContextService, TestFileService } from '../../../../test/common/workbenchTestServices.js';
 import { TestEnvironmentService, workbenchInstantiationService } from '../../../../test/browser/workbenchTestServices.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { IWorkspaceFolderLocationService } from '../../../../../platform/workspace/common/folderLocations.js';
 import { URI } from '../../../../../base/common/uri.js';
-import { IWorkspace, IWorkspaceContextService, WorkbenchState } from '../../../../../platform/workspace/common/workspace.js';
+import { IWorkspace, IWorkspaceContextService, toWorkspaceFolder, WorkbenchState, Workspace } from '../../../../../platform/workspace/common/workspace.js';
 import { joinPath } from '../../../../../base/common/resources.js';
 import { mock } from '../../../../../base/test/common/mock.js';
 import { FuzzyScore } from '../../../../../base/common/filters.js';
@@ -35,6 +35,10 @@ import { IExplorerService } from '../../browser/files.js';
 import { ResourceLabels } from '../../../../browser/labels.js';
 import { hasKey } from '../../../../../base/common/types.js';
 import { testIWorkspace } from '../../../../../platform/workspace/test/common/testWorkspace.js';
+import { groupResource, IWorkspaceGroup, IWorkspaceGroupsService } from '../../../../services/workspaceGroups/common/workspaceGroups.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
+import { ExplorerGroupContextMenu, ExplorerGroupItem } from '../../common/explorerGroupItem.js';
+import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 
 class TestExplorerView extends ExplorerView {
 	renderForTesting(container: HTMLElement): void {
@@ -104,6 +108,26 @@ suite('Files - ExplorerView', () => {
 		assert.deepStrictEqual(getContext([], [s3, s1, s4], true, noNavigationController), [s3, s1, s4]);
 	});
 
+	test('getContext drops group items', function () {
+		const d = new Date().getTime();
+		const root = createStat.call(this, '/web', 'web', true, false, 8096, d);
+		const file = createStat.call(this, '/web/file', 'file', false, false, 8096, d);
+		const group = new ExplorerGroupItem({ name: 'shop', folders: [root.resource], collapsed: false }, [root], fileService, configService, NullFilesConfigurationService);
+		const noNavigationController = { getCompressedNavigationController: (stat: ExplorerItem) => undefined };
+
+		assert.deepStrictEqual([
+			getContext([group], [group], true, noNavigationController),
+			getContext([group], [group], false, noNavigationController),
+			getContext([group], [group, root, file], true, noNavigationController),
+			getContext([root], [group, root], true, noNavigationController),
+		], [
+			[],
+			[],
+			[root, file],
+			[root],
+		]);
+	});
+
 	suite('context menu', () => {
 		let view: TestExplorerView;
 		let tree: WorkbenchCompressibleAsyncDataTree<ExplorerItem | ExplorerItem[], ExplorerItem, FuzzyScore>;
@@ -163,6 +187,7 @@ suite('Files - ExplorerView', () => {
 				getEditors: () => [],
 			});
 			instantiationService.stub(IOpenerService, {});
+			instantiationService.stub(IWorkspaceGroupsService, { groups: [], whenReady: Promise.resolve(), onDidChange: Event.None, getGroupOf: () => undefined, setFocusedGroup: () => { } });
 
 			view = ds.add(instantiationService.createInstance(TestExplorerView, {
 				id: 'testExplorerContextMenu',
@@ -440,6 +465,300 @@ suite('Files - ExplorerView', () => {
 			tree.setSelection([first, second]);
 
 			assert.deepStrictEqual(view.getContext(true), [first, second]);
+		});
+	});
+
+	suite('workspace groups', () => {
+		let view: TestExplorerView;
+		let tree: WorkbenchCompressibleAsyncDataTree<ExplorerItem | ExplorerItem[], ExplorerItem, FuzzyScore>;
+		let menu: IContextMenuMenuDelegate | undefined;
+		let menuShown: Emitter<void>;
+		let contextKeyService: IContextKeyService;
+		let web: ExplorerItem;
+		let webFile: ExplorerItem;
+		let api: ExplorerItem;
+		let apiSrc: ExplorerItem;
+		let scratch: ExplorerItem;
+		let groups: IWorkspaceGroup[];
+		let groupsChanged: Emitter<void>;
+		let fetched: Set<string>;
+		let calls: unknown[];
+		let roots: ExplorerItem[];
+
+		const createItem = (path: string, parent?: ExplorerItem, isDirectory = true) => new ExplorerItem(URI.file(path), fileService, configService, NullFilesConfigurationService, parent, isDirectory);
+
+		setup(async () => {
+			web = createItem('/web');
+			webFile = createItem('/web/file.txt', web, false);
+			web.addChild(webFile);
+			api = createItem('/api');
+			apiSrc = createItem('/api/src', api);
+			api.addChild(apiSrc);
+			apiSrc.addChild(createItem('/api/src/main.ts', apiSrc, false));
+			scratch = createItem('/scratch');
+			scratch.addChild(createItem('/scratch/notes.txt', scratch, false));
+			groups = [{ name: 'shop', folders: [web.resource, api.resource], collapsed: true }];
+			groupsChanged = ds.add(new Emitter<void>());
+			menu = undefined;
+			menuShown = ds.add(new Emitter<void>());
+			fetched = new Set();
+			calls = [];
+
+			const instantiationService = workbenchInstantiationService({
+				configurationService: () => new TestConfigurationService({ explorer: { autoReveal: false, compactFolders: false } }),
+			}, ds);
+			instantiationService.stub(IWorkspaceContextService, new TestContextService(new Workspace('groups', [web, api, scratch].map(root => toWorkspaceFolder(root.resource)), false, URI.file('/groups.code-workspace'), () => false)));
+			instantiationService.stub(IViewDescriptorService, {
+				onDidChangeLocation: Event.None,
+				getViewLocationById: () => ViewContainerLocation.Sidebar,
+			});
+			roots = [web, api, scratch];
+			instantiationService.stub(IExplorerService, {
+				roots,
+				registerView: () => { },
+				findClosest: (resource: URI) => roots.map(root => root.find(resource)).find(item => !!item) ?? null,
+				findClosestRoot: (resource: URI) => roots.find(root => resource.path.startsWith(root.resource.path)) ?? null,
+				isEditable: () => false,
+				getEditable: () => undefined,
+			});
+			instantiationService.stub(IWorkspaceGroupsService, {
+				get groups() { return groups; },
+				whenReady: Promise.resolve(),
+				onDidChange: groupsChanged.event,
+				getGroupOf: (folder: URI) => groups.find(group => group.folders.some(f => f.toString() === folder.toString())),
+				setCollapsed: (name: string, collapsed: boolean) => {
+					calls.push({ setCollapsed: name, collapsed });
+					groups = groups.map(group => group.name === name ? { ...group, collapsed } : group);
+					groupsChanged.fire();
+				},
+				setFocusedGroup: (name: string | undefined) => { calls.push({ setFocusedGroup: name }); },
+			});
+			instantiationService.stub(IClipboardService, new TestClipboardService());
+			instantiationService.stub(IWorkspaceFolderLocationService, new class extends mock<IWorkspaceFolderLocationService>() { override readonly onDidChangeLocation = Event.None; });
+			instantiationService.stub(IContextMenuService, {
+				showContextMenu: delegate => {
+					assert.ok(hasKey(delegate, { menuActionOptions: true }));
+					menu = delegate;
+					menuShown.fire();
+				},
+			});
+			instantiationService.stub(IEditorResolverService, { getEditors: () => [] });
+			instantiationService.stub(IOpenerService, {});
+			contextKeyService = instantiationService.get(IContextKeyService);
+			// left behind by a session in which the group was open
+			instantiationService.get(IStorageService).store(ExplorerView.TREE_VIEW_STATE_STORAGE_KEY, JSON.stringify({ expanded: [groupResource('shop').toString(), web.getId(), scratch.getId()], focus: [], selection: [] }), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+
+			view = ds.add(instantiationService.createInstance(TestExplorerView, {
+				id: 'testExplorerGroups',
+				title: 'Explorer',
+				delegate: { willOpenElement: () => { }, didOpenElement: () => { } },
+			}));
+
+			const container = dom.append(document.body, $('.explorer-groups-test'));
+			ds.add(toDisposable(() => container.remove()));
+			tree = ds.add(instantiationService.createInstance(WorkbenchCompressibleAsyncDataTree<ExplorerItem | ExplorerItem[], ExplorerItem, FuzzyScore>,
+				'ExplorerGroupsTest', container,
+				{ getHeight: () => 20, getTemplateId: () => 'test' },
+				{ isIncompressible: () => true },
+				[{
+					templateId: 'test',
+					renderTemplate: container => container,
+					renderElement: (node, _index, container) => {
+						container.textContent = node.element.name;
+						container.dataset.resource = node.element.resource.toString();
+					},
+					renderCompressedElements: () => { },
+					disposeTemplate: () => { },
+				}],
+				{
+					hasChildren: item => Array.isArray(item) || item.hasChildren(() => true),
+					getChildren: async item => {
+						if (Array.isArray(item)) {
+							return item;
+						}
+						fetched.add(item.name);
+						return item instanceof ExplorerGroupItem ? item.roots : [...item.children.values()];
+					},
+				},
+				{
+					compressionEnabled: false,
+					collapseByDefault: () => true,
+					accessibilityProvider: { getAriaLabel: item => item.name, getWidgetAriaLabel: () => 'Explorer' },
+					identityProvider: { getId: item => item.getId() },
+				}));
+			tree.layout(300, 400);
+
+			instantiationService.stubInstance(WorkbenchCompressibleAsyncDataTree<ExplorerItem | ExplorerItem[], ExplorerItem, FuzzyScore>, tree);
+			instantiationService.stubInstance(ResourceLabels, { dispose: () => { } });
+			instantiationService.stubInstance(FilesFilter, { onDidChange: Event.None, dispose: () => { } });
+			instantiationService.stubInstance(ExplorerFindProvider, { isShowingFilterResults: () => false });
+			instantiationService.stubInstance(ExplorerDataSource, {});
+			instantiationService.stubInstance(FileSorter, {});
+			instantiationService.stubInstance(FileDragAndDrop, {});
+			instantiationService.stubInstance(FilesRenderer, { getCompressedNavigationController: () => undefined, dispose: () => { } });
+			view.renderForTesting(container);
+			view.setVisible(true);
+			await view.setTreeInput();
+		});
+
+		function groupItem(): ExplorerGroupItem {
+			const input = tree.getInput();
+			assert.ok(Array.isArray(input) && input[0] instanceof ExplorerGroupItem);
+			return input[0];
+		}
+
+		function describeInput() {
+			const input = tree.getInput();
+			assert.ok(Array.isArray(input));
+			return input.map(item => item instanceof ExplorerGroupItem
+				? { group: item.groupName, collapsed: tree.isCollapsed(item), roots: item.roots.map(root => root.name) }
+				: { root: item.name, collapsed: tree.isCollapsed(item) });
+		}
+
+		async function settle(): Promise<void> {
+			// a change of the groups is applied in the queue that also serves `setTreeInput`
+			await view.setTreeInput();
+		}
+
+		test('shows groups above ungrouped roots without fetching the roots of a collapsed group', () => {
+			assert.deepStrictEqual({ input: describeInput(), fetched: [...fetched].sort(), calls }, {
+				input: [
+					{ group: 'shop', collapsed: true, roots: ['web', 'api'] },
+					{ root: 'scratch', collapsed: false },
+				],
+				fetched: ['scratch'],
+				calls: [{ setFocusedGroup: undefined }],
+			});
+		});
+
+		test('expanding or collapsing a group in the tree updates the groups service', async () => {
+			calls = [];
+			await tree.expand(groupItem());
+			await settle();
+			tree.collapse(groupItem());
+			await settle();
+			assert.deepStrictEqual({ input: describeInput(), fetched: [...fetched].sort(), calls }, {
+				input: [
+					{ group: 'shop', collapsed: true, roots: ['web', 'api'] },
+					{ root: 'scratch', collapsed: false },
+				],
+				fetched: ['scratch', 'shop'],
+				calls: [{ setCollapsed: 'shop', collapsed: false }, { setCollapsed: 'shop', collapsed: true }],
+			});
+		});
+
+		test('a group expanded through the groups service expands in the tree', async () => {
+			calls = [];
+			groups = groups.map(group => ({ ...group, collapsed: false }));
+			groupsChanged.fire();
+			await settle();
+			assert.deepStrictEqual({ input: describeInput(), fetched: [...fetched].sort(), calls }, {
+				input: [
+					{ group: 'shop', collapsed: false, roots: ['web', 'api'] },
+					{ root: 'scratch', collapsed: false },
+				],
+				fetched: ['scratch', 'shop'],
+				calls: [],
+			});
+		});
+
+		test('a new root is expanded only when it is ungrouped or its group is open', async () => {
+			const lib = createItem('/lib');
+			lib.addChild(createItem('/lib/index.ts', lib, false));
+			const tmp = createItem('/tmp');
+			tmp.addChild(createItem('/tmp/log.txt', tmp, false));
+			roots.push(lib, tmp);
+			groups = [{ name: 'shop', folders: [web.resource, api.resource, lib.resource], collapsed: true }];
+			await view.setTreeInput();
+			assert.deepStrictEqual({ input: describeInput(), fetched: [...fetched].sort() }, {
+				input: [
+					{ group: 'shop', collapsed: true, roots: ['web', 'api', 'lib'] },
+					{ root: 'scratch', collapsed: false },
+					{ root: 'tmp', collapsed: false },
+				],
+				fetched: ['scratch', 'tmp'],
+			});
+		});
+
+		test('a changed membership rebuilds the tree input', async () => {
+			groups = [{ name: 'shop', folders: [web.resource], collapsed: true }, { name: 'lab', folders: [scratch.resource], collapsed: false }];
+			groupsChanged.fire();
+			await settle();
+			assert.deepStrictEqual(describeInput(), [
+				{ group: 'shop', collapsed: true, roots: ['web'] },
+				{ group: 'lab', collapsed: false, roots: ['scratch'] },
+				{ root: 'api', collapsed: true },
+			]);
+		});
+
+		test('reveal expands a collapsed group only when forced', async () => {
+			calls = [];
+			await view.selectResource(webFile.resource, true);
+			const notForced = { collapsed: tree.isCollapsed(groupItem()), selection: tree.getSelection(), calls: [...calls] };
+			await view.selectResource(webFile.resource, 'force');
+			assert.deepStrictEqual({ notForced, collapsed: tree.isCollapsed(groupItem()), selection: tree.getSelection(), fetched: [...fetched].sort() }, {
+				notForced: { collapsed: true, selection: [], calls: [] },
+				collapsed: false,
+				selection: [webFile],
+				fetched: ['scratch', 'shop', 'web'],
+			});
+		});
+
+		test('collapse all collapses the groups', async () => {
+			await tree.expand(groupItem());
+			await tree.expand(api);
+			await tree.expand(apiSrc);
+			await settle();
+			calls = [];
+			view.collapseAll();
+			const apiCollapsed = tree.isCollapsed(api);
+			const src = tree.isCollapsed(apiSrc);
+			await settle();
+			assert.deepStrictEqual({ input: describeInput(), api: apiCollapsed, src, calls }, {
+				input: [
+					{ group: 'shop', collapsed: true, roots: ['web', 'api'] },
+					{ root: 'scratch', collapsed: false },
+				],
+				api: false,
+				src: true,
+				calls: [{ setCollapsed: 'shop', collapsed: true }],
+			});
+		});
+
+		test('focusing a group sets its context keys and the focused group', () => {
+			calls = [];
+			const keys = () => ({
+				group: contextKeyService.getContextKeyValue('explorerResourceIsGroup'),
+				folder: contextKeyService.getContextKeyValue('explorerResourceIsFolder'),
+				root: contextKeyService.getContextKeyValue('explorerResourceIsRoot'),
+			});
+			tree.setFocus([groupItem()]);
+			const onGroup = keys();
+			tree.setFocus([scratch]);
+			assert.deepStrictEqual({ onGroup, onRoot: keys(), calls }, {
+				onGroup: { group: true, folder: false, root: false },
+				onRoot: { group: false, folder: true, root: true },
+				calls: [{ setFocusedGroup: 'shop' }, { setFocusedGroup: undefined }],
+			});
+		});
+
+		test('focusing an item inside a group makes its group the focused group', async () => {
+			await tree.expand(groupItem());
+			await tree.expand(web);
+			calls = [];
+			tree.setFocus([webFile]);
+			assert.deepStrictEqual(calls, [{ setFocusedGroup: 'shop' }]);
+		});
+
+		test('the context menu of a group is the group menu', async () => {
+			const group = groupItem();
+			tree.setFocus([group]);
+			const shown = Event.toPromise(menuShown.event);
+			const element = Array.from(tree.getHTMLElement().querySelectorAll<HTMLElement>('[data-resource]')).find(element => element.dataset.resource === group.resource.toString());
+			assert.ok(element);
+			element.dispatchEvent(new MouseEvent('contextmenu', { button: 2, bubbles: true }));
+			await shown;
+			assert.deepStrictEqual({ menuId: menu?.menuId, arg: menu?.menuActionOptions?.arg?.toString() }, { menuId: ExplorerGroupContextMenu, arg: group.resource.toString() });
 		});
 	});
 

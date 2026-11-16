@@ -25,6 +25,7 @@ import { IKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { equals, deepClone } from '../../../../../base/common/objects.js';
 import { posix, relative, sep } from '../../../../../base/common/path.js';
 import { ExplorerItem, NewExplorerItem } from '../../common/explorerModel.js';
+import { compareExplorerGroupItems, getGroupDescription, isExplorerGroupItem } from '../../common/explorerGroupItem.js';
 import { compareFileExtensionsDefault, compareFileNamesDefault, compareFileNamesUpper, compareFileExtensionsUpper, compareFileNamesLower, compareFileExtensionsLower, compareFileNamesUnicode, compareFileExtensionsUnicode } from '../../../../../base/common/comparers.js';
 import { CodeDataTransfers, containsDragType } from '../../../../../platform/dnd/browser/dnd.js';
 import { fillEditorsDragData } from '../../../../browser/dnd.js';
@@ -117,6 +118,10 @@ export class ExplorerDataSource implements IAsyncDataSource<ExplorerItem | Explo
 	getChildren(element: ExplorerItem | ExplorerItem[]): ExplorerItem[] | Promise<ExplorerItem[]> {
 		if (Array.isArray(element)) {
 			return element;
+		}
+
+		if (isExplorerGroupItem(element)) {
+			return element.roots;
 		}
 
 		if (this.findProvider.isShowingFilterResults()) {
@@ -1004,9 +1009,10 @@ export class FilesRenderer implements ICompressibleTreeRenderer<ExplorerItem, Fu
 		// Apply some CSS magic to get things looking as reasonable as possible.
 		const themeIsUnhappyWithNesting = theme.hasFileIcons && (theme.hidesExplorerArrows || !theme.hasFolderIcons);
 		const realignNestedChildren = stat.nestedParent && themeIsUnhappyWithNesting;
+		const isGroup = isExplorerGroupItem(stat);
 		templateData.contribs.forEach(c => c.setResource(stat.resource));
-		templateData.label.setResource({ resource: stat.resource, name: label }, {
-			fileKind: stat.isRoot ? FileKind.ROOT_FOLDER : stat.isDirectory ? FileKind.FOLDER : FileKind.FILE,
+		templateData.label.setResource({ resource: stat.resource, name: label, description: isGroup ? getGroupDescription(stat) : undefined }, {
+			fileKind: stat.isRoot || isGroup ? FileKind.ROOT_FOLDER : stat.isDirectory ? FileKind.FOLDER : FileKind.FILE,
 			extraClasses: realignNestedChildren ? [...extraClasses, 'align-nest-icon-with-parent-icon'] : extraClasses,
 			fileDecorations: this.config.explorer.decorations,
 			matches: createMatches(filterData),
@@ -1014,7 +1020,7 @@ export class FilesRenderer implements ICompressibleTreeRenderer<ExplorerItem, Fu
 			domId
 		});
 
-		const highlightResults = stat.isDirectory ? this.highlightTree.get(stat) : 0;
+		const highlightResults = stat.isDirectory && !isGroup ? this.highlightTree.get(stat) : 0;
 		if (highlightResults > 0) {
 			const badge = new CountBadge(templateData.label.element.lastElementChild as HTMLElement, {}, { ...defaultCountBadgeStyles, badgeBackground: asCssVariable(listFilterMatchHighlight), badgeBorder: asCssVariable(listFilterMatchHighlightBorder) });
 			badge.setCount(highlightResults);
@@ -1425,6 +1431,11 @@ export class FileSorter implements ITreeSorter<ExplorerItem> {
 	) { }
 
 	compare(statA: ExplorerItem, statB: ExplorerItem): number {
+		const groupOrder = compareExplorerGroupItems(statA, statB);
+		if (groupOrder !== undefined) {
+			return groupOrder;
+		}
+
 		// Do not sort roots
 		if (statA.isRoot) {
 			if (statB.isRoot) {
@@ -2078,7 +2089,7 @@ export function isCompressedFolderName(target: HTMLElement | EventTarget | Eleme
 export class ExplorerCompressionDelegate implements ITreeCompressionDelegate<ExplorerItem> {
 
 	isIncompressible(stat: ExplorerItem): boolean {
-		return stat.isRoot || !stat.isDirectory || stat instanceof NewExplorerItem || (!stat.parent || stat.parent.isRoot);
+		return stat.isRoot || isExplorerGroupItem(stat) || !stat.isDirectory || stat instanceof NewExplorerItem || (!stat.parent || stat.parent.isRoot);
 	}
 }
 

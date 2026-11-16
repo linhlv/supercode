@@ -9,7 +9,7 @@ import { Sequencer } from '../../../../../base/common/async.js';
 import * as perf from '../../../../../base/common/performance.js';
 import { WorkbenchActionExecutedEvent, WorkbenchActionExecutedClassification } from '../../../../../base/common/actions.js';
 import { memoize } from '../../../../../base/common/decorators.js';
-import { IFilesConfiguration, ExplorerFolderContext, FilesExplorerFocusedContext, ExplorerFocusedContext, ExplorerRootContext, ExplorerResourceReadonlyContext, ExplorerResourceCut, ExplorerResourceMoveableToTrash, ExplorerCompressedFocusContext, ExplorerCompressedFirstFocusContext, ExplorerCompressedLastFocusContext, ExplorerResourceAvailableEditorIdsContext, VIEW_ID, ExplorerResourceWritableContext, ViewHasSomeCollapsibleRootItemContext, FoldersViewVisibleContext, ExplorerResourceParentReadOnlyContext, ExplorerFindProviderActive } from '../../common/files.js';
+import { IFilesConfiguration, ExplorerFolderContext, FilesExplorerFocusedContext, ExplorerFocusedContext, ExplorerRootContext, ExplorerResourceReadonlyContext, ExplorerResourceCut, ExplorerResourceMoveableToTrash, ExplorerCompressedFocusContext, ExplorerCompressedFirstFocusContext, ExplorerCompressedLastFocusContext, ExplorerResourceAvailableEditorIdsContext, VIEW_ID, ExplorerResourceWritableContext, ViewHasSomeCollapsibleRootItemContext, FoldersViewVisibleContext, ExplorerResourceParentReadOnlyContext, ExplorerFindProviderActive, ExplorerGroupContext } from '../../common/files.js';
 import { FileCopiedContext, NEW_FILE_COMMAND_ID, NEW_FOLDER_COMMAND_ID } from '../fileActions.js';
 import * as DOM from '../../../../../base/browser/dom.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
@@ -57,6 +57,8 @@ import { AbstractTreePart } from '../../../../../base/browser/ui/tree/abstractTr
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { IAccessibilityService } from '../../../../../platform/accessibility/common/accessibility.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
+import { IWorkspaceGroupsService } from '../../../../services/workspaceGroups/common/workspaceGroups.js';
+import { applyGroupCollapseState, ExplorerGroupContextMenu, ExplorerGroupItem, findExplorerGroupItem, getExpandableRoots, getExplorerRoots, getGroupNameOfItem, getGroupsLayoutKey, groupExplorerRoots, isExplorerGroupItem } from '../../common/explorerGroupItem.js';
 
 
 function hasExpandedRootChild(tree: WorkbenchCompressibleAsyncDataTree<ExplorerItem | ExplorerItem[], ExplorerItem, FuzzyScore>, treeInput: ExplorerItem[]): boolean {
@@ -96,6 +98,10 @@ const identityProvider = {
 
 export function getContext(focus: ExplorerItem[], selection: ExplorerItem[], respectMultiSelection: boolean,
 	compressedNavigationControllerProvider: { getCompressedNavigationController(stat: ExplorerItem): ICompressedNavigationController[] | undefined }): ExplorerItem[] {
+
+	// Workspace groups are no files: commands never act on them
+	focus = focus.filter(stat => !isExplorerGroupItem(stat));
+	selection = selection.filter(stat => !isExplorerGroupItem(stat));
 
 	let focusedStat: ExplorerItem | undefined;
 	focusedStat = focus.length ? focus[0] : undefined;
@@ -191,6 +197,7 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 	private availableEditorIdsContext: IContextKey<string>;
 
 	private rootContext: IContextKey<boolean>;
+	private groupContext: IContextKey<boolean>;
 	private resourceMoveableToTrash: IContextKey<boolean>;
 
 	private renderer!: FilesRenderer;
@@ -205,6 +212,7 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 	private viewVisibleContextKey: IContextKey<boolean>;
 
 	private readonly setTreeInputSequencer = new Sequencer();
+	private groupsLayoutKey: string | undefined;
 	private horizontalScrolling: boolean | undefined;
 
 	private dragHandler!: DelayedDragHandler;
@@ -242,7 +250,8 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 		@ICommandService protected readonly commandService: ICommandService,
 		@IOpenerService openerService: IOpenerService,
 		@IAccessibilityService private readonly accessibilityService: IAccessibilityService,
-		@IEnvironmentService private readonly environmentService: IEnvironmentService
+		@IEnvironmentService private readonly environmentService: IEnvironmentService,
+		@IWorkspaceGroupsService private readonly groupsService: IWorkspaceGroupsService
 	) {
 		super(options, keybindingService, contextMenuService, configurationService, contextKeyService, viewDescriptorService, instantiationService, openerService, themeService, hoverService);
 
@@ -255,6 +264,7 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 		this.readonlyContext = ExplorerResourceReadonlyContext.bindTo(contextKeyService);
 		this.availableEditorIdsContext = ExplorerResourceAvailableEditorIdsContext.bindTo(contextKeyService);
 		this.rootContext = ExplorerRootContext.bindTo(contextKeyService);
+		this.groupContext = ExplorerGroupContext.bindTo(contextKeyService);
 		this.resourceMoveableToTrash = ExplorerResourceMoveableToTrash.bindTo(contextKeyService);
 		this.compressedFocusContext = ExplorerCompressedFocusContext.bindTo(contextKeyService);
 		this.compressedFocusFirstContext = ExplorerCompressedFirstFocusContext.bindTo(contextKeyService);
@@ -387,6 +397,8 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 
 		// Also handle configuration updates
 		this._register(this.configurationService.onDidChangeConfiguration(e => this.onConfigurationUpdated(e)));
+
+		this._register(this.groupsService.onDidChange(() => this.onDidChangeGroups()));
 
 		this._register(this.onDidChangeBodyVisibility(async visible => {
 			if (visible) {
@@ -638,6 +650,9 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 			if (element) {
 				const navigationControllers = this.renderer.getCompressedNavigationController(Array.isArray(element) ? element[0] : element);
 				navigationControllers?.forEach(controller => controller.updateCollapsed(e.node.collapsed));
+				if (isExplorerGroupItem(element)) {
+					this.onDidChangeGroupCollapseState(element, e.node.collapsed);
+				}
 			}
 			// Update showing expand / collapse button
 			this.updateAnyCollapsedContext();
@@ -682,8 +697,10 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 		const folders = this.contextService.getWorkspace().folders;
 		const resource = stat ? stat.resource : folders[folders.length - 1].uri;
 		stat = stat || this.explorerService.findClosest(resource);
+		const isGroup = isExplorerGroupItem(stat);
+		this.groupContext.set(isGroup);
 		this.resourceContext.set(resource);
-		this.folderContext.set(!!stat && stat.isDirectory);
+		this.folderContext.set(!!stat && stat.isDirectory && !isGroup);
 		this.readonlyContext.set(!!stat && !!stat.isReadonly);
 		this.parentReadonlyContext.set(Boolean(stat?.parent?.isReadonly));
 		this.rootContext.set(!!stat && stat.isRoot);
@@ -740,7 +757,7 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 		}
 
 		this.contextMenuService.showContextMenu({
-			menuId: MenuId.ExplorerContext,
+			menuId: isExplorerGroupItem(stat) ? ExplorerGroupContextMenu : MenuId.ExplorerContext,
 			menuActionOptions: { arg, shouldForwardArgs: true },
 			contextKeyService: this.tree.contextKeyService,
 			getAnchor: () => anchor,
@@ -758,6 +775,7 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 	private onFocusChanged(elements: readonly ExplorerItem[]): void {
 		const stat = elements.at(0);
 		this.setContextKeys(stat);
+		this.groupsService.setFocusedGroup(getGroupNameOfItem(stat, folder => this.groupsService.getGroupOf(folder)));
 
 		if (stat) {
 			const enableTrash = Boolean(this.configurationService.getValue<IFilesConfiguration>().files?.enableTrash);
@@ -841,6 +859,8 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 	}
 
 	private async doSetTreeInput(): Promise<void> {
+		// The groups decide which roots may be expanded, and expanding a root fetches it from its host
+		await this.groupsService.whenReady;
 		if (!this.isBodyVisible()) {
 			return;
 		}
@@ -853,8 +873,9 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 		let input: ExplorerItem | ExplorerItem[] = roots[0];
 		if (this.contextService.getWorkbenchState() !== WorkbenchState.FOLDER || roots[0].error) {
 			// Display roots only when multi folder workspace
-			input = roots;
+			input = groupExplorerRoots(roots, this.groupsService, (group, groupRoots) => this.instantiationService.createInstance(ExplorerGroupItem, group, groupRoots));
 		}
+		this.groupsLayoutKey = getGroupsLayoutKey(this.groupsService.groups);
 
 		let viewState: IAsyncDataTreeViewState | undefined;
 		if (this.tree?.getInput()) {
@@ -867,27 +888,32 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 		}
 
 		const previousInput = this.tree.getInput();
-		const promise = this.tree.setInput(input, viewState).then(async () => {
+		// Groups open and close as the groups service says; roots of a closed group are not fetched
+		const groups = this.groupsService.groups;
+		const inputViewState = groups.length ? { ...viewState, expanded: applyGroupCollapseState(viewState?.expanded, groups) } : viewState;
+		const promise = this.tree.setInput(input, inputViewState).then(async () => {
 			if (Array.isArray(input)) {
+				await this.doSyncGroupCollapseState();
+				const expandableRoots = getExpandableRoots(input, group => this.tree.hasNode(group) && !this.tree.isCollapsed(group));
 				if (!viewState || previousInput instanceof ExplorerItem) {
 					// There is no view state for this workspace (we transitioned from a folder workspace?), expand up to five roots.
 					// If there are many roots in a workspace, expanding them all would can cause performance issues #176226
-					for (let i = 0; i < Math.min(input.length, 5); i++) {
+					for (let i = 0; i < Math.min(expandableRoots.length, 5); i++) {
 						try {
-							await this.tree.expand(input[i]);
+							await this.tree.expand(expandableRoots[i]);
 						} catch (e) { }
 					}
 				}
 				// Reloaded or transitioned from an empty workspace, but only have a single folder in the workspace.
-				if (!previousInput && input.length === 1 && this.configurationService.getValue<IFilesConfiguration>().explorer.expandSingleFolderWorkspaces) {
-					await this.tree.expand(input[0]).catch(() => { });
+				if (!previousInput && input.length === 1 && expandableRoots.length === 1 && this.configurationService.getValue<IFilesConfiguration>().explorer.expandSingleFolderWorkspaces) {
+					await this.tree.expand(expandableRoots[0]).catch(() => { });
 				}
 				if (Array.isArray(previousInput)) {
 					const previousRoots = new ResourceMap<true>();
-					previousInput.forEach(previousRoot => previousRoots.set(previousRoot.resource, true));
+					getExplorerRoots(previousInput).forEach(previousRoot => previousRoots.set(previousRoot.resource, true));
 
 					// Roots added to the explorer -> expand them.
-					await Promise.all(input.map(async item => {
+					await Promise.all(expandableRoots.map(async item => {
 						if (!previousRoots.has(item.resource)) {
 							try {
 								await this.tree.expand(item);
@@ -924,6 +950,19 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 
 		// Expand all stats in the parent chain.
 		let item: ExplorerItem | null = this.explorerService.findClosestRoot(resource);
+
+		// Only an explicit reveal opens a closed workspace group (opening it connects its hosts)
+		const group = item && findExplorerGroupItem(this.tree.getInput(), item);
+		if (group && this.tree.hasNode(group) && this.tree.isCollapsed(group)) {
+			if (reveal !== 'force') {
+				return;
+			}
+			try {
+				await this.tree.expand(group);
+			} catch (e) {
+				return this.selectResource(resource, reveal, retry + 1);
+			}
+		}
 
 		while (item && item.resource.toString() !== resource.toString()) {
 			try {
@@ -995,16 +1034,54 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 
 		const treeInput = this.tree.getInput();
 		if (Array.isArray(treeInput)) {
-			if (hasExpandedRootChild(this.tree, treeInput)) {
-				treeInput.forEach(folder => {
+			const roots = getExplorerRoots(treeInput);
+			if (hasExpandedRootChild(this.tree, roots)) {
+				roots.forEach(folder => {
 					folder.children.forEach(child => this.tree.hasNode(child) && this.tree.collapse(child, true));
 				});
+				treeInput.forEach(item => isExplorerGroupItem(item) && this.tree.hasNode(item) && this.tree.collapse(item));
 
 				return;
 			}
 		}
 
 		this.tree.collapseAll();
+	}
+
+	private onDidChangeGroups(): void {
+		if (getGroupsLayoutKey(this.groupsService.groups) !== this.groupsLayoutKey) {
+			this.setTreeInput();
+		} else {
+			this.setTreeInputSequencer.queue(() => this.doSyncGroupCollapseState());
+		}
+	}
+
+	/** Expands and collapses the groups in the tree to match the groups service. */
+	private async doSyncGroupCollapseState(): Promise<void> {
+		const input = this.tree.getInput();
+		if (!Array.isArray(input)) {
+			return;
+		}
+		for (const item of input) {
+			const group = isExplorerGroupItem(item) ? this.groupsService.groups.find(g => g.name === item.groupName) : undefined;
+			if (!group || !this.tree.hasNode(item) || !this.tree.isCollapsible(item) || this.tree.isCollapsed(item) === group.collapsed) {
+				continue;
+			}
+			if (group.collapsed) {
+				this.tree.collapse(item);
+			} else {
+				try {
+					await this.tree.expand(item);
+				} catch (e) { }
+			}
+		}
+	}
+
+	private onDidChangeGroupCollapseState(item: ExplorerGroupItem, collapsed: boolean): void {
+		const group = this.groupsService.groups.find(g => g.name === item.groupName);
+		if (group && group.collapsed !== collapsed) {
+			this.groupsService.setCollapsed(group.name, collapsed);
+		}
 	}
 
 	previousCompressedStat(): void {
@@ -1099,12 +1176,12 @@ export function createFileIconThemableTreeContainerScope(container: HTMLElement,
 	return themeService.onDidFileIconThemeChange(onDidChangeFileIconTheme);
 }
 
-const CanCreateContext = ContextKeyExpr.or(
+const CanCreateContext = ContextKeyExpr.and(ExplorerGroupContext.toNegated(), ContextKeyExpr.or(
 	// Folder: can create unless readonly
 	ContextKeyExpr.and(ExplorerFolderContext, ExplorerResourceWritableContext),
 	// File: can create unless parent is readonly
 	ContextKeyExpr.and(ExplorerFolderContext.toNegated(), ExplorerResourceParentReadOnlyContext.toNegated())
-);
+));
 
 registerAction2(class extends Action2 {
 	constructor() {

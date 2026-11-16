@@ -15,9 +15,16 @@ import { INotificationService } from '../../../../platform/notification/common/n
 import { IQuickInputButton, IQuickInputService, IQuickPickItem, IQuickPickSeparator } from '../../../../platform/quickinput/common/quickInput.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
-import { IMultiRemoteService, IRemoteHostStatus, RemoteHostState } from '../../../services/remote/common/multiRemoteService.js';
+import { IMultiRemoteService, RemoteHostState } from '../../../services/remote/common/multiRemoteService.js';
 import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { IHostDemandService } from './hostDemand.js';
+
+/** A host and its state; `undefined` when it was never connected. */
+interface IHostRow {
+	readonly authority: string;
+	readonly state: RemoteHostState | undefined;
+	readonly error?: string;
+}
 
 interface IHostPickItem extends IQuickPickItem {
 	readonly authority?: string;
@@ -35,6 +42,7 @@ export class MultiRemoteStatusContribution extends Disposable implements IWorkbe
 
 	private static readonly RECONNECT_BUTTON: IQuickInputButton = { iconClass: ThemeIcon.asClassName(Codicon.refresh), tooltip: localize('multiRemote.reconnect', "Reconnect") };
 	private static readonly DISCONNECT_BUTTON: IQuickInputButton = { iconClass: ThemeIcon.asClassName(Codicon.debugDisconnect), tooltip: localize('multiRemote.disconnect', "Disconnect") };
+	private static readonly CONNECT_BUTTON: IQuickInputButton = { iconClass: ThemeIcon.asClassName(Codicon.plug), tooltip: localize('multiRemote.connect', "Connect") };
 	private static readonly TERMINAL_BUTTON: IQuickInputButton = { iconClass: ThemeIcon.asClassName(Codicon.terminal), tooltip: localize('multiRemote.newTerminal', "New Terminal") };
 
 	private readonly entry = this._register(new MutableDisposable<IStatusbarEntryAccessor>());
@@ -58,6 +66,7 @@ export class MultiRemoteStatusContribution extends Disposable implements IWorkbe
 		this._register(CommandsRegistry.registerCommand(MultiRemoteStatusContribution.SHOW_HOSTS_COMMAND, () => this.showHosts()));
 		this._register(this.multiRemoteService.onDidChangeHostState(() => this.update()));
 		this._register(this.contextService.onDidChangeWorkspaceFolders(() => this.update()));
+		this._register(this.hostDemandService.onDidChange(() => this.update()));
 		this.update();
 	}
 
@@ -75,8 +84,8 @@ export class MultiRemoteStatusContribution extends Disposable implements IWorkbe
 			return;
 		}
 
-		// Hosts kept only for a terminal or a dialog are listed in the Hosts picker, not counted here
-		const hosts = this.multiRemoteService.getHosts().filter(host => this.hostDemandService.hasRoots(host.authority));
+		// Only wanted hosts are counted; idle hosts and hosts kept for a terminal or a dialog are listed in the Hosts picker
+		const hosts: IHostRow[] = this.hostDemandService.getWantedHosts().map(authority => this.statusOf(authority));
 		const connected = hosts.filter(host => host.state === RemoteHostState.Connected).length;
 		const text = `$(remote) ${connected}/${hosts.length}`;
 		const tooltip = hosts.map(host => this.describe(host)).join('\n') || localize('multiRemote.noHosts', "No remote hosts");
@@ -94,11 +103,19 @@ export class MultiRemoteStatusContribution extends Disposable implements IWorkbe
 		}
 	}
 
-	private describe(host: IRemoteHostStatus): string {
+	private statusOf(authority: string): IHostRow {
+		const key = authority.toLowerCase();
+		return this.multiRemoteService.getHosts().find(host => host.authority.toLowerCase() === key) ?? { authority, state: undefined };
+	}
+
+	private describe(host: IHostRow): string {
 		return localize('multiRemote.hostState', "{0}: {1}", this.hostLabel(host.authority), this.stateLabel(host));
 	}
 
-	private stateLabel(host: IRemoteHostStatus): string {
+	private stateLabel(host: IHostRow): string {
+		if (host.state === undefined) {
+			return localize('multiRemote.stateNotConnected', "Not connected");
+		}
 		switch (host.state) {
 			case RemoteHostState.Connected: return localize('multiRemote.stateConnected', "Connected");
 			case RemoteHostState.Connecting: return localize('multiRemote.stateConnecting', "Connecting…");
@@ -115,12 +132,24 @@ export class MultiRemoteStatusContribution extends Disposable implements IWorkbe
 		const picker = store.add(this.quickInputService.createQuickPick<IHostPickItem>({ useSeparators: true }));
 		picker.placeholder = localize('multiRemote.pickHost', "Remote Hosts");
 
-		const items: (IHostPickItem | IQuickPickSeparator)[] = this.multiRemoteService.getHosts().map(host => ({
+		// Known hosts first, then hosts with roots that were never connected (idle in a collapsed group)
+		const listed = new Map<string, IHostRow>();
+		for (const host of this.multiRemoteService.getHosts()) {
+			listed.set(host.authority.toLowerCase(), host);
+		}
+		for (const authority of this.hostDemandService.getRootHosts()) {
+			if (!listed.has(authority.toLowerCase())) {
+				listed.set(authority.toLowerCase(), { authority, state: undefined });
+			}
+		}
+		const items: (IHostPickItem | IQuickPickSeparator)[] = [...listed.values()].map(host => ({
 			label: this.hostLabel(host.authority),
 			description: this.stateLabel(host),
 			detail: host.authority,
 			authority: host.authority,
-			buttons: [MultiRemoteStatusContribution.RECONNECT_BUTTON, MultiRemoteStatusContribution.DISCONNECT_BUTTON, MultiRemoteStatusContribution.TERMINAL_BUTTON]
+			buttons: host.state === undefined || host.state === RemoteHostState.Disconnected
+				? [MultiRemoteStatusContribution.CONNECT_BUTTON, MultiRemoteStatusContribution.TERMINAL_BUTTON]
+				: [MultiRemoteStatusContribution.RECONNECT_BUTTON, MultiRemoteStatusContribution.DISCONNECT_BUTTON, MultiRemoteStatusContribution.TERMINAL_BUTTON]
 		}));
 		items.push({ type: 'separator' });
 		items.push({ label: localize('multiRemote.addSshFolder', "Add SSH Folder to Workspace…"), addFolder: true });
@@ -133,6 +162,9 @@ export class MultiRemoteStatusContribution extends Disposable implements IWorkbe
 			}
 			picker.hide();
 			switch (button) {
+				case MultiRemoteStatusContribution.CONNECT_BUTTON:
+					this.multiRemoteService.connect(authority).catch(() => { /* failures are surfaced through the host state */ });
+					break;
 				case MultiRemoteStatusContribution.RECONNECT_BUTTON:
 					this.multiRemoteService.reconnect(authority).catch(() => { /* failures are surfaced through the host state */ });
 					break;

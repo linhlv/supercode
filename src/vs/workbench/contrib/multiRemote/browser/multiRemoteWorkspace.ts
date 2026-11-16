@@ -4,12 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Emitter, Event } from '../../../../base/common/event.js';
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { disposableTimeout } from '../../../../base/common/async.js';
+import { Disposable, DisposableMap } from '../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { extUriBiasedIgnorePathCase } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { Action2, MenuId } from '../../../../platform/actions/common/actions.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
@@ -23,13 +25,15 @@ import { IDecorationData, IDecorationsProvider, IDecorationsService } from '../.
 import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IMultiRemoteService, RemoteHostState } from '../../../services/remote/common/multiRemoteService.js';
+import { IWorkspaceGroupsService, WORKSPACE_GROUP_SCHEME, groupNameOf, groupResource } from '../../../services/workspaceGroups/common/workspaceGroups.js';
 import { ExplorerRootContext } from '../../files/common/files.js';
 import { IExplorerService } from '../../files/browser/files.js';
 import { IHostDemandService } from './hostDemand.js';
 
 /**
- * Connects every remote host referenced by a workspace folder in the background, refreshes
- * the workspace when a host becomes connected and decorates roots of hosts that are not.
+ * Connects the remote hosts the window wants in the background, disconnects hosts that only
+ * collapsed groups use once they were idle for a while, refreshes the workspace when a host
+ * becomes connected and decorates roots and groups of hosts that are not.
  */
 export class MultiRemoteWorkspaceContribution extends Disposable implements IWorkbenchContribution {
 
@@ -37,6 +41,10 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 
 	private readonly errors = new Map<string, string | undefined>();
 	private readonly _onDidChangeDecorations = this._register(new Emitter<readonly URI[]>());
+	/** Idle timers by lower-cased authority. */
+	private readonly idleTimers = this._register(new DisposableMap<string>());
+	/** Lower-cased authorities with a connect call in flight. */
+	private readonly connecting = new Set<string>();
 
 	constructor(
 		@IMultiRemoteService private readonly multiRemoteService: IMultiRemoteService,
@@ -48,6 +56,8 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 		@ILabelService private readonly labelService: ILabelService,
 		@IHostDemandService private readonly hostDemandService: IHostDemandService,
 		@IWorkspaceTrustManagementService private readonly workspaceTrustManagementService: IWorkspaceTrustManagementService,
+		@IWorkspaceGroupsService private readonly groupsService: IWorkspaceGroupsService,
+		@IConfigurationService private readonly settingsService: IConfigurationService,
 		@IDecorationsService decorationsService: IDecorationsService
 	) {
 		super();
@@ -58,23 +68,25 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 
 		this._register(decorationsService.registerDecorationsProvider(this.createDecorationsProvider()));
 
-		this.connectHosts(this.contextService.getWorkspace().folders);
+		this.update();
+		this._register(this.hostDemandService.onDidChange(() => this.update()));
 		this._register(this.workspaceTrustManagementService.onDidChangeTrust(trusted => {
 			if (trusted) {
-				this.connectHosts(this.contextService.getWorkspace().folders);
+				this.update();
 			}
 			this._onDidChangeDecorations.fire(this.contextService.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.vscodeRemote).map(folder => folder.uri));
 		}));
 		this._register(this.contextService.onDidChangeWorkspaceFolders(e => {
-			this.connectHosts(e.added);
 			this.disconnectUnusedHosts(e.removed);
+			this.update();
 		}));
+		this._register(this.groupsService.onDidChange(() => this._onDidChangeDecorations.fire(this.groupsService.groups.map(group => groupResource(group.name)))));
 		this._register(this.multiRemoteService.onDidChangeHostState(status => {
 			this.errors.set(status.authority.toLowerCase(), status.error);
 			if (status.state === RemoteHostState.Connected) {
 				this.onDidConnect(status.authority);
 			}
-			this._onDidChangeDecorations.fire(this.getRoots(status.authority).map(folder => folder.uri));
+			this._onDidChangeDecorations.fire([...this.getRoots(status.authority).map(folder => folder.uri), ...this.getGroupResources(status.authority)]);
 		}));
 	}
 
@@ -83,21 +95,58 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 		return this.contextService.getWorkspace().folders.filter(folder => folder.uri.scheme === Schemas.vscodeRemote && folder.uri.authority.toLowerCase() === key);
 	}
 
-	/** Connects the hosts of `folders` in the background. An untrusted workspace connects no host on its own. */
-	private connectHosts(folders: readonly IWorkspaceFolder[]): void {
-		if (!this.workspaceTrustManagementService.isWorkspaceTrusted()) {
-			return;
-		}
-		const seen = new Set<string>();
-		for (const folder of folders) {
-			const authority = folder.uri.authority;
-			if (folder.uri.scheme !== Schemas.vscodeRemote || !authority || seen.has(authority.toLowerCase())) {
-				continue;
+	private getGroupResources(authority: string): URI[] {
+		const key = authority.toLowerCase();
+		return this.groupsService.groups
+			.filter(group => group.folders.some(folder => folder.scheme === Schemas.vscodeRemote && folder.authority.toLowerCase() === key))
+			.map(group => groupResource(group.name));
+	}
+
+	/**
+	 * Brings connections in line with what the window wants: connects wanted hosts that are
+	 * untouched or disconnected (never a failed one), and starts or cancels idle timers.
+	 * Cheap and idempotent, as it runs on every change of the demand.
+	 */
+	private update(): void {
+		const trusted = this.workspaceTrustManagementService.isWorkspaceTrusted();
+		const withRoots = new Set<string>();
+		for (const authority of this.hostDemandService.getRootHosts()) {
+			const key = authority.toLowerCase();
+			withRoots.add(key);
+			const state = this.multiRemoteService.getState(authority);
+			if (this.hostDemandService.isWanted(authority)) {
+				this.idleTimers.deleteAndDispose(key);
+				if (trusted && (state === undefined || state === RemoteHostState.Disconnected) && !this.connecting.has(key)) {
+					this.connecting.add(key);
+					// Failures are surfaced through the host state
+					this.multiRemoteService.connect(authority).catch(() => { }).finally(() => this.connecting.delete(key));
+				}
+			} else if (state === RemoteHostState.Connecting || state === RemoteHostState.Connected || state === RemoteHostState.Reconnecting) {
+				if (!this.idleTimers.has(key)) {
+					this.startIdleTimer(authority);
+				}
+			} else {
+				this.idleTimers.deleteAndDispose(key);
 			}
-			seen.add(authority.toLowerCase());
-			// Failures are surfaced through the host state
-			this.multiRemoteService.connect(authority).catch(() => { });
 		}
+		for (const key of [...this.idleTimers.keys()]) {
+			if (!withRoots.has(key)) {
+				this.idleTimers.deleteAndDispose(key);
+			}
+		}
+	}
+
+	private startIdleTimer(authority: string): void {
+		const key = authority.toLowerCase();
+		const delay = Math.max(0, Number(this.settingsService.getValue('multiRemote.idleDisconnectDelay') ?? 300));
+		this.idleTimers.set(key, disposableTimeout(() => {
+			this.idleTimers.deleteAndDispose(key);
+			const state = this.multiRemoteService.getState(authority);
+			const active = state === RemoteHostState.Connecting || state === RemoteHostState.Connected || state === RemoteHostState.Reconnecting;
+			if (active && this.hostDemandService.hasRoots(authority) && !this.hostDemandService.isWanted(authority)) {
+				this.multiRemoteService.disconnect(authority).catch(() => { /* surfaced through the host state */ });
+			}
+		}, delay * 1000));
 	}
 
 	/** Disconnects the hosts of removed roots that have no root and no terminal left. */
@@ -110,6 +159,7 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 			}
 			seen.add(authority.toLowerCase());
 			if (!this.hostDemandService.isInUse(authority)) {
+				this.idleTimers.deleteAndDispose(authority.toLowerCase());
 				this.multiRemoteService.disconnect(authority).catch(() => { /* surfaced through the host state */ });
 			}
 		}
@@ -129,11 +179,49 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 		}
 	}
 
+	/** Summarizes the hosts of a group: `!` if one failed, `…` while one connects in an expanded group. */
+	private provideGroupDecoration(resource: URI): IDecorationData | undefined {
+		const name = groupNameOf(resource)?.toLowerCase();
+		const group = this.groupsService.groups.find(g => g.name.toLowerCase() === name);
+		if (!group) {
+			return undefined;
+		}
+		const authorities = new Map<string, string>();
+		for (const folder of group.folders) {
+			if (folder.scheme === Schemas.vscodeRemote && folder.authority && !authorities.has(folder.authority.toLowerCase())) {
+				authorities.set(folder.authority.toLowerCase(), folder.authority);
+			}
+		}
+		const hosts = [...authorities.values()].map(authority => ({ authority, state: this.multiRemoteService.getState(authority) }));
+		const tooltip = hosts.map(host => localize('multiRemote.groupHostState', "{0}: {1}", this.labelService.getHostLabel(Schemas.vscodeRemote, host.authority) || host.authority, this.describeState(host.state))).join('\n');
+		if (hosts.some(host => host.state === RemoteHostState.Failed)) {
+			return { letter: '!', color: listErrorForeground, tooltip, weight: 10 };
+		}
+		if (!group.collapsed && hosts.some(host => host.state === RemoteHostState.Connecting || host.state === RemoteHostState.Reconnecting)) {
+			return { letter: '…', tooltip, weight: 10 };
+		}
+		return undefined;
+	}
+
+	private describeState(state: RemoteHostState | undefined): string {
+		switch (state) {
+			case RemoteHostState.Connected: return localize('multiRemote.groupConnected', "Connected");
+			case RemoteHostState.Connecting: return localize('multiRemote.groupConnecting', "Connecting…");
+			case RemoteHostState.Reconnecting: return localize('multiRemote.groupReconnecting', "Reconnecting…");
+			case RemoteHostState.Failed: return localize('multiRemote.groupFailed', "Failed");
+			case RemoteHostState.Disconnected: return localize('multiRemote.groupDisconnected', "Disconnected");
+			default: return localize('multiRemote.groupNotConnected', "Not connected");
+		}
+	}
+
 	private createDecorationsProvider(): IDecorationsProvider {
 		return {
 			label: localize('multiRemote.hostStatus', "Remote Host Status"),
 			onDidChange: this._onDidChangeDecorations.event as Event<readonly URI[]>,
 			provideDecorations: (resource: URI): IDecorationData | undefined => {
+				if (resource.scheme === WORKSPACE_GROUP_SCHEME) {
+					return this.provideGroupDecoration(resource);
+				}
 				if (resource.scheme !== Schemas.vscodeRemote) {
 					return undefined;
 				}

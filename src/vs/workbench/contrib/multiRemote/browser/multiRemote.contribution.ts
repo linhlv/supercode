@@ -6,6 +6,9 @@
 import { registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../base/common/network.js';
+import { localize } from '../../../../nls.js';
+import { Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
+import { Registry } from '../../../../platform/registry/common/platform.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
 import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
@@ -51,3 +54,18 @@ registerWorkbenchContribution2(MultiRemoteWorkspaceContribution.ID, MultiRemoteW
 registerAction2(ReconnectHostAction);
 registerWorkbenchContribution2(MultiRemoteStatusContribution.ID, MultiRemoteStatusContribution, WorkbenchPhase.AfterRestored);
 registerAction2(AddRemoteFolderToWorkspaceAction);
+
+Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
+	id: 'multiRemote',
+	order: 100,
+	title: localize('multiRemote.configurationTitle', "Remote Hosts"),
+	type: 'object',
+	properties: {
+		'multiRemote.idleDisconnectDelay': {
+			type: 'number',
+			default: 300,
+			minimum: 0,
+			description: localize('multiRemote.idleDisconnectDelay', "Seconds an SSH host stays connected after only collapsed workspace groups use it.")
+		}
+	}
+});

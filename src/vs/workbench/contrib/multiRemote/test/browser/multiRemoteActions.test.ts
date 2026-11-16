@@ -4,19 +4,19 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
-import { Emitter } from '../../../../../base/common/event.js';
+import { Emitter, Event } from '../../../../../base/common/event.js';
 import { IDisposable } from '../../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../../base/common/network.js';
 import { isEqual } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { IFileDialogService, IOpenDialogOptions } from '../../../../../platform/dialogs/common/dialogs.js';
 import { ServicesAccessor } from '../../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import { IProgressService } from '../../../../../platform/progress/common/progress.js';
-import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
+import { IQuickInputButton, IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IWorkspaceContextService, IWorkspaceFolder, IWorkspaceFoldersChangeEvent } from '../../../../../platform/workspace/common/workspace.js';
 import { IMultiRemoteService, IRemoteHostConnection, IRemoteHostStatus, RemoteHostState } from '../../../../services/remote/common/multiRemoteService.js';
 import { IStatusbarEntry, IStatusbarEntryAccessor, IStatusbarService } from '../../../../services/statusbar/browser/statusbar.js';
@@ -137,6 +137,10 @@ suite('MultiRemoteActions', () => {
 		let entryId: string | undefined;
 		let stateEmitter: Emitter<IRemoteHostStatus>;
 		let foldersEmitter: Emitter<IWorkspaceFoldersChangeEvent>;
+		let wantedAuthorities: string[] | undefined;
+		let statusConnectCalls: string[];
+		let pickerItems: { authority?: string; description?: string; buttons?: IQuickInputButton[] }[];
+		let triggerButton: ((item: { authority?: string }, button: IQuickInputButton) => void) | undefined;
 
 		const current = () => entry;
 
@@ -149,7 +153,8 @@ suite('MultiRemoteActions', () => {
 			const multiRemoteService = {
 				isEnabled: true,
 				onDidChangeHostState: stateEmitter.event,
-				getHosts: () => hosts
+				getHosts: () => hosts,
+				connect: async (authority: string) => { statusConnectCalls.push(authority); return undefined!; }
 			} as Partial<IMultiRemoteService> as IMultiRemoteService;
 			const contextService = {
 				getWorkspace: () => ({ folders }),
@@ -161,11 +166,34 @@ suite('MultiRemoteActions', () => {
 					return { update: (u: IStatusbarEntry) => { entry = u; }, dispose: () => { entry = undefined; } } as IStatusbarEntryAccessor & IDisposable;
 				}
 			} as Partial<IStatusbarService> as IStatusbarService;
+			const quickInputService = {
+				createQuickPick: () => {
+					const buttonEmitter = store.add(new Emitter<{ item: { authority?: string }; button: IQuickInputButton }>());
+					const hideEmitter = store.add(new Emitter<void>());
+					triggerButton = (item, button) => buttonEmitter.fire({ item, button });
+					return {
+						set items(value: readonly { authority?: string; description?: string; buttons?: IQuickInputButton[]; type?: string }[]) { pickerItems = value.filter(i => i.type !== 'separator' && i.authority); },
+						onDidTriggerItemButton: buttonEmitter.event,
+						onDidAccept: Event.None,
+						onDidHide: hideEmitter.event,
+						selectedItems: [],
+						show: () => { },
+						hide: () => hideEmitter.fire(),
+						dispose: () => { }
+					};
+				}
+			} as unknown as IQuickInputService;
+			const rootHosts = () => [...new Set(folders.map(f => f.uri.authority))];
 			return store.add(new MultiRemoteStatusContribution(
 				multiRemoteService, contextService, statusbarService,
-				{} as IQuickInputService, { getHostLabel: () => '' } as Partial<ILabelService> as ILabelService,
+				quickInputService, { getHostLabel: () => '' } as Partial<ILabelService> as ILabelService,
 				{} as ICommandService, {} as INotificationService,
-				{ hasRoots: (authority: string) => folders.some(f => f.uri.authority.toLowerCase() === authority.toLowerCase()) } as Partial<IHostDemandService> as IHostDemandService));
+				{
+					onDidChange: Event.None,
+					hasRoots: (authority: string) => folders.some(f => f.uri.authority.toLowerCase() === authority.toLowerCase()),
+					getRootHosts: rootHosts,
+					getWantedHosts: () => wantedAuthorities ?? rootHosts()
+				} as Partial<IHostDemandService> as IHostDemandService));
 		}
 
 		setup(() => {
@@ -175,6 +203,32 @@ suite('MultiRemoteActions', () => {
 			folders = [];
 			entry = undefined;
 			entryId = undefined;
+			wantedAuthorities = undefined;
+			statusConnectCalls = [];
+			pickerItems = [];
+			triggerButton = undefined;
+		});
+
+		test('Hosts n/m counts wanted hosts', () => {
+			hosts = [{ authority: 'ssh-remote+a', state: RemoteHostState.Connected }, { authority: 'ssh-remote+c', state: RemoteHostState.Connected }];
+			folders = [remoteFolder('ssh-remote+a'), remoteFolder('ssh-remote+b'), remoteFolder('ssh-remote+c')];
+			wantedAuthorities = ['ssh-remote+a', 'ssh-remote+b'];
+			create();
+			assert.strictEqual(entry?.text, '$(remote) 1/2');
+		});
+
+		test('the picker lists idle hosts with roots as Not connected and Connect calls connect', async () => {
+			hosts = [{ authority: 'ssh-remote+a', state: RemoteHostState.Connected }];
+			folders = [remoteFolder('ssh-remote+a'), remoteFolder('ssh-remote+b')];
+			wantedAuthorities = ['ssh-remote+a'];
+			create();
+			await CommandsRegistry.getCommand('multiRemote.showHosts')!.handler(undefined!);
+			const idle = pickerItems.find(i => i.authority === 'ssh-remote+b')!;
+			triggerButton!(idle, idle.buttons!.find(b => b.tooltip === 'Connect')!);
+			assert.deepStrictEqual({ items: pickerItems.map(i => [i.authority, i.description]), connectCalls: statusConnectCalls }, {
+				items: [['ssh-remote+a', 'Connected'], ['ssh-remote+b', 'Not connected']],
+				connectCalls: ['ssh-remote+b']
+			});
 		});
 
 		test('status text counts connected hosts', () => {

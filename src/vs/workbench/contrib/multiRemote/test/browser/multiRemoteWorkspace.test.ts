@@ -19,7 +19,7 @@ import { IEditorGroupsService } from '../../../../services/editor/common/editorG
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IMultiRemoteService, IRemoteHostConnection, IRemoteHostStatus, RemoteHostState } from '../../../../services/remote/common/multiRemoteService.js';
 import { IExplorerService } from '../../../files/browser/files.js';
-import { ITerminalInstance, ITerminalService } from '../../../terminal/browser/terminal.js';
+import { IHostDemandService } from '../../browser/hostDemand.js';
 import { MultiRemoteWorkspaceContribution, ReconnectHostAction } from '../../browser/multiRemoteWorkspace.js';
 
 suite('MultiRemoteWorkspace', () => {
@@ -67,9 +67,11 @@ suite('MultiRemoteWorkspace', () => {
 			registerDecorationsProvider: (p: IDecorationsProvider): IDisposable => { provider = p; return toDisposable(() => { provider = undefined; }); }
 		} as Partial<IDecorationsService> as IDecorationsService;
 		const labelService = { getHostLabel: (_scheme: string, authority: string) => `SSH: ${authority.substring('ssh-remote+'.length)}@box` } as Partial<ILabelService> as ILabelService;
-		const terminalService = { get instances() { return terminalAuthorities.map(remoteAuthority => ({ remoteAuthority }) as ITerminalInstance); } } as Partial<ITerminalService> as ITerminalService;
+		const hostDemandService = {
+			isInUse: (authority: string) => folders.some(f => f.uri.authority.toLowerCase() === authority.toLowerCase()) || terminalAuthorities.some(a => a?.toLowerCase() === authority.toLowerCase())
+		} as Partial<IHostDemandService> as IHostDemandService;
 		const trustService = { isWorkspaceTrusted: () => trusted, onDidChangeTrust: trustEmitter.event } as Partial<IWorkspaceTrustManagementService> as IWorkspaceTrustManagementService;
-		return store.add(new MultiRemoteWorkspaceContribution(multiRemoteService, contextService, configurationService, explorerService, editorGroupsService, editorService, labelService, terminalService, trustService, decorationsService));
+		return store.add(new MultiRemoteWorkspaceContribution(multiRemoteService, contextService, configurationService, explorerService, editorGroupsService, editorService, labelService, hostDemandService, trustService, decorationsService));
 	}
 
 	setup(() => {

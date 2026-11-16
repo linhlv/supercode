@@ -8,15 +8,15 @@ import { Disposable } from '../../../../base/common/lifecycle.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
-import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../common/contributions.js';
 import { RemoteFileSystemRouter } from '../../../services/remote/browser/remoteFileSystemRouter.js';
 import { IMultiRemoteService } from '../../../services/remote/common/multiRemoteService.js';
 import { AddRemoteFolderToWorkspaceAction } from './multiRemoteActions.js';
+import { IHostDemandService } from './hostDemand.js';
 import { MultiRemoteStatusContribution } from './multiRemoteStatus.js';
 import { MultiRemoteTerminalContribution } from './multiRemoteTerminal.js';
-import { hasRoots, MultiRemoteWorkspaceContribution, ReconnectHostAction } from './multiRemoteWorkspace.js';
+import { MultiRemoteWorkspaceContribution, ReconnectHostAction } from './multiRemoteWorkspace.js';
 
 /** Registers the host-routing `vscode-remote` file system provider in local windows. */
 export class MultiRemoteFileSystemContribution extends Disposable implements IWorkbenchContribution {
@@ -27,8 +27,8 @@ export class MultiRemoteFileSystemContribution extends Disposable implements IWo
 		@IMultiRemoteService multiRemoteService: IMultiRemoteService,
 		@IFileService fileService: IFileService,
 		@ILabelService labelService: ILabelService,
-		@IWorkspaceContextService contextService: IWorkspaceContextService,
-		@IWorkspaceTrustManagementService workspaceTrustManagementService: IWorkspaceTrustManagementService
+		@IWorkspaceTrustManagementService workspaceTrustManagementService: IWorkspaceTrustManagementService,
+		@IHostDemandService hostDemandService: IHostDemandService
 	) {
 		super();
 
@@ -37,8 +37,8 @@ export class MultiRemoteFileSystemContribution extends Disposable implements IWo
 				multiRemoteService,
 				undefined,
 				authority => labelService.getHostLabel(Schemas.vscodeRemote, authority),
-				// Only roots of a trusted workspace connect on their own; everything else needs a user action
-				authority => workspaceTrustManagementService.isWorkspaceTrusted() && hasRoots(authority, contextService)
+				// Only wanted hosts of a trusted workspace connect on their own; everything else needs a user action
+				authority => workspaceTrustManagementService.isWorkspaceTrusted() && hostDemandService.isWanted(authority)
 			));
 			this._register(fileService.registerProvider(Schemas.vscodeRemote, router));
 		}

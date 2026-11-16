@@ -16,10 +16,8 @@ import { INotificationService } from '../../../../platform/notification/common/n
 import { IProgressService, ProgressLocation } from '../../../../platform/progress/common/progress.js';
 import { RemoteNameContext } from '../../../common/contextkeys.js';
 import { IMultiRemoteService, IRemoteHostConnection } from '../../../services/remote/common/multiRemoteService.js';
-import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IWorkspaceEditingService } from '../../../services/workspaces/common/workspaceEditing.js';
-import { ITerminalService } from '../../terminal/browser/terminal.js';
-import { isHostInUse } from './multiRemoteWorkspace.js';
+import { IHostDemandService } from './hostDemand.js';
 
 /**
  * Connects to a remote host, lets the user pick folders on it and adds them to the workspace.
@@ -45,8 +43,7 @@ export class AddRemoteFolderToWorkspaceAction extends Action2 {
 		const workspaceEditingService = accessor.get(IWorkspaceEditingService);
 		const notificationService = accessor.get(INotificationService);
 		const labelService = accessor.get(ILabelService);
-		const contextService = accessor.get(IWorkspaceContextService);
-		const terminalService = accessor.get(ITerminalService);
+		const hostDemandService = accessor.get(IHostDemandService);
 
 		if (!authority || !multiRemoteService.isEnabled) {
 			return;
@@ -74,7 +71,7 @@ export class AddRemoteFolderToWorkspaceAction extends Action2 {
 		});
 		if (!picked || picked.length === 0) {
 			// Nothing uses a host that was only connected for the dialog
-			if (!isHostInUse(authority, contextService, terminalService)) {
+			if (!hostDemandService.isInUse(authority)) {
 				await multiRemoteService.disconnect(authority);
 			}
 			return;

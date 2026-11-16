@@ -25,18 +25,7 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { IMultiRemoteService, RemoteHostState } from '../../../services/remote/common/multiRemoteService.js';
 import { ExplorerRootContext } from '../../files/common/files.js';
 import { IExplorerService } from '../../files/browser/files.js';
-import { ITerminalService } from '../../terminal/browser/terminal.js';
-
-/** Whether a remote host still has workspace roots or terminals, so it has to stay connected. */
-export function isHostInUse(authority: string, contextService: IWorkspaceContextService, terminalService: ITerminalService): boolean {
-	return hasRoots(authority, contextService) || terminalService.instances.some(instance => instance.remoteAuthority?.toLowerCase() === authority.toLowerCase());
-}
-
-/** Whether `authority` is the host of at least one workspace root. */
-export function hasRoots(authority: string, contextService: IWorkspaceContextService): boolean {
-	const key = authority.toLowerCase();
-	return contextService.getWorkspace().folders.some(folder => folder.uri.scheme === Schemas.vscodeRemote && folder.uri.authority.toLowerCase() === key);
-}
+import { IHostDemandService } from './hostDemand.js';
 
 /**
  * Connects every remote host referenced by a workspace folder in the background, refreshes
@@ -57,7 +46,7 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 		@IEditorGroupsService private readonly editorGroupsService: IEditorGroupsService,
 		@IEditorService private readonly editorService: IEditorService,
 		@ILabelService private readonly labelService: ILabelService,
-		@ITerminalService private readonly terminalService: ITerminalService,
+		@IHostDemandService private readonly hostDemandService: IHostDemandService,
 		@IWorkspaceTrustManagementService private readonly workspaceTrustManagementService: IWorkspaceTrustManagementService,
 		@IDecorationsService decorationsService: IDecorationsService
 	) {
@@ -120,7 +109,7 @@ export class MultiRemoteWorkspaceContribution extends Disposable implements IWor
 				continue;
 			}
 			seen.add(authority.toLowerCase());
-			if (!isHostInUse(authority, this.contextService, this.terminalService)) {
+			if (!this.hostDemandService.isInUse(authority)) {
 				this.multiRemoteService.disconnect(authority).catch(() => { /* surfaced through the host state */ });
 			}
 		}

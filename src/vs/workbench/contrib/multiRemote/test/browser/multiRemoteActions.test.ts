@@ -21,7 +21,7 @@ import { IWorkspaceContextService, IWorkspaceFolder, IWorkspaceFoldersChangeEven
 import { IMultiRemoteService, IRemoteHostConnection, IRemoteHostStatus, RemoteHostState } from '../../../../services/remote/common/multiRemoteService.js';
 import { IStatusbarEntry, IStatusbarEntryAccessor, IStatusbarService } from '../../../../services/statusbar/browser/statusbar.js';
 import { IWorkspaceEditingService } from '../../../../services/workspaces/common/workspaceEditing.js';
-import { ITerminalInstance, ITerminalService } from '../../../terminal/browser/terminal.js';
+import { IHostDemandService } from '../../browser/hostDemand.js';
 import { AddRemoteFolderToWorkspaceAction } from '../../browser/multiRemoteActions.js';
 import { MultiRemoteStatusContribution } from '../../browser/multiRemoteStatus.js';
 
@@ -49,8 +49,7 @@ suite('MultiRemoteActions', () => {
 				connect: () => { connectCalls++; return connectResult; },
 				disconnect: async (authority: string) => { disconnected.push(authority); }
 			} as Partial<IMultiRemoteService>],
-			[IWorkspaceContextService, { getWorkspace: () => ({ folders: workspaceFolders }) } as Partial<IWorkspaceContextService>],
-			[ITerminalService, { instances: terminalAuthorities.map(remoteAuthority => ({ remoteAuthority }) as ITerminalInstance) } as Partial<ITerminalService>],
+			[IHostDemandService, { isInUse: (authority: string) => workspaceFolders.some(f => f.uri.authority === authority) || terminalAuthorities.includes(authority) } as Partial<IHostDemandService>],
 			[IProgressService, { withProgress: (_options: unknown, task: () => Promise<unknown>) => task() } as Partial<IProgressService>],
 			[IFileDialogService, { showOpenDialog: async (options: IOpenDialogOptions) => { dialogCalls.push(options); return dialogResult; } } as Partial<IFileDialogService>],
 			[IWorkspaceEditingService, { addFolders: async (folders: { uri: URI; name?: string }[]) => { added.push(folders); } } as Partial<IWorkspaceEditingService>],
@@ -165,7 +164,8 @@ suite('MultiRemoteActions', () => {
 			return store.add(new MultiRemoteStatusContribution(
 				multiRemoteService, contextService, statusbarService,
 				{} as IQuickInputService, { getHostLabel: () => '' } as Partial<ILabelService> as ILabelService,
-				{} as ICommandService, {} as INotificationService));
+				{} as ICommandService, {} as INotificationService,
+				{ hasRoots: (authority: string) => folders.some(f => f.uri.authority.toLowerCase() === authority.toLowerCase()) } as Partial<IHostDemandService> as IHostDemandService));
 		}
 
 		setup(() => {

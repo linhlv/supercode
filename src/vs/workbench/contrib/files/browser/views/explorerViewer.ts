@@ -25,7 +25,8 @@ import { IKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { equals, deepClone } from '../../../../../base/common/objects.js';
 import { posix, relative, sep } from '../../../../../base/common/path.js';
 import { ExplorerItem, NewExplorerItem } from '../../common/explorerModel.js';
-import { compareExplorerGroupItems, getGroupDescription, getRootsOutsideCollapsedGroups, isExplorerGroupItem } from '../../common/explorerGroupItem.js';
+import { IWorkspaceGroupsService } from '../../../../services/workspaceGroups/common/workspaceGroups.js';
+import { compareExplorerGroupItems, getGroupDescription, getGroupDropTarget, getRootsOutsideCollapsedGroups, isExplorerGroupItem } from '../../common/explorerGroupItem.js';
 import { compareFileExtensionsDefault, compareFileNamesDefault, compareFileNamesUpper, compareFileExtensionsUpper, compareFileNamesLower, compareFileExtensionsLower, compareFileNamesUnicode, compareFileExtensionsUnicode } from '../../../../../base/common/comparers.js';
 import { CodeDataTransfers, containsDragType } from '../../../../../platform/dnd/browser/dnd.js';
 import { fillEditorsDragData } from '../../../../browser/dnd.js';
@@ -1584,7 +1585,8 @@ export class FileDragAndDrop implements ITreeDragAndDrop<ExplorerItem> {
 		@IConfigurationService private configurationService: IConfigurationService,
 		@IInstantiationService private instantiationService: IInstantiationService,
 		@IWorkspaceEditingService private workspaceEditingService: IWorkspaceEditingService,
-		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService
+		@IUriIdentityService private readonly uriIdentityService: IUriIdentityService,
+		@IWorkspaceGroupsService private readonly groupsService: IWorkspaceGroupsService
 	) {
 		const updateDropEnablement = (e: IConfigurationChangeEvent | undefined) => {
 			if (!e || e.affectsConfiguration('explorer.enableDragAndDrop')) {
@@ -1598,6 +1600,11 @@ export class FileDragAndDrop implements ITreeDragAndDrop<ExplorerItem> {
 	onDragOver(data: IDragAndDropData, target: ExplorerItem | undefined, targetIndex: number | undefined, targetSector: ListViewTargetSector | undefined, originalEvent: DragEvent): boolean | ITreeDragOverReaction {
 		if (!this.dropEnabled) {
 			return false;
+		}
+
+		const groupDrop = this.getGroupDrop(data, target);
+		if (groupDrop) {
+			return groupDrop.move ? { accept: true, effect: { type: ListDragOverEffectType.Move, position: ListDragOverEffectPosition.Over } } : false;
 		}
 
 		// Compressed folders
@@ -1777,8 +1784,28 @@ export class FileDragAndDrop implements ITreeDragAndDrop<ExplorerItem> {
 		}
 	}
 
+	private getGroupDrop(data: IDragAndDropData, target: ExplorerItem | undefined) {
+		if (data instanceof NativeDragAndDropData) {
+			return isExplorerGroupItem(target) ? { move: false as const } : undefined;
+		}
+		if (data instanceof ExternalElementsDragAndDropData) {
+			return undefined;
+		}
+		return getGroupDropTarget((data as ElementsDragAndDropData<ExplorerItem, ExplorerItem[]>).elements, target, this.groupsService);
+	}
+
 	async drop(data: IDragAndDropData, target: ExplorerItem | undefined, targetIndex: number | undefined, targetSector: ListViewTargetSector | undefined, originalEvent: DragEvent): Promise<void> {
 		this.compressedDropTargetDisposable.dispose();
+
+		const groupDrop = this.getGroupDrop(data, target);
+		if (groupDrop) {
+			if (groupDrop.move) {
+				for (const item of (data as ElementsDragAndDropData<ExplorerItem, ExplorerItem[]>).elements) {
+					await this.groupsService.moveFolder(item.resource, groupDrop.group);
+				}
+			}
+			return;
+		}
 
 		// Find compressed target
 		if (target) {

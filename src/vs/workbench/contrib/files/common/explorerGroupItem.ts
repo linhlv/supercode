@@ -175,3 +175,32 @@ export function getGroupDescription(item: ExplorerGroupItem): string {
 		? localize('explorerGroupOneFolder', "1 folder")
 		: localize('explorerGroupFolders', "{0} folders", item.roots.length);
 }
+
+/**
+ * What dropping `dragged` onto `target` means for workspace groups: move the roots into a group
+ * (or out of all groups), reject the drop, or `undefined` when groups don't take part and the
+ * regular Explorer drag and drop applies (also for plain reordering within the same group).
+ */
+export function getGroupDropTarget(dragged: readonly ExplorerItem[], target: ExplorerItem | undefined, groupsService: Pick<IWorkspaceGroupsService, 'groups' | 'getGroupOf'>): { move: true; group: string | undefined } | { move: false } | undefined {
+	if (!groupsService.groups.length) {
+		return undefined;
+	}
+	if (dragged.some(isExplorerGroupItem)) {
+		return { move: false };
+	}
+
+	const targetIsGroup = isExplorerGroupItem(target);
+	if (!dragged.every(item => item.isRoot)) {
+		return targetIsGroup ? { move: false } : undefined;
+	}
+	if (target && !targetIsGroup && !target.isRoot) {
+		return undefined;
+	}
+
+	const targetGroup = target ? getGroupNameOfItem(target, folder => groupsService.getGroupOf(folder)) : undefined;
+	const unchanged = dragged.every(item => groupsService.getGroupOf(item.resource)?.name === targetGroup);
+	if (unchanged) {
+		return targetIsGroup ? { move: false } : undefined;
+	}
+	return { move: true, group: targetGroup };
+}

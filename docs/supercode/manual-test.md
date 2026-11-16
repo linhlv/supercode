@@ -26,12 +26,12 @@ Needs a local window with a saved workspace. Check the `.code-workspace` content
 | G4 | Collapse it again, wait 5 minutes (or set `multiRemote.idleDisconnectDelay` lower) | The host disconnects; Hosts n/m drops; its roots don't show `!` | |
 | G5 | Reload the window | Each group returns in the state it was left in; roots in collapsed groups are not fetched | |
 | G6 | Drag a root onto a group header, onto a root in another group, onto an ungrouped root, onto empty space | Membership follows each drop; files and groups can't be dropped onto a group; a group header can't be dragged; with no groups, root reordering by drag still works | |
-| G7 | Root right-click > Move to Group… | Lists groups and Ungrouped; hidden in remote windows | |
+| G7 | Root right-click > Move to Group… (also in a workspace without groups) | Lists the other groups, New Group… and Ungrouped (only for a grouped root); New Group… asks for a name and moves the root into the new group; hidden in remote windows | |
 | G8 | New Empty Group with a name that already exists | Validation error | |
 | G9 | Group right-click: Add Folder, Add SSH Folder, New Terminal in Group, Rename (also F2), Ungroup, Remove (confirm) | Folder lands in that group; terminal starts in the group's root; the group menu opens, not the file menu | |
 | G10 | Edit the `.code-workspace` with stock VS Code (rename a group, delete a folder, add a folder, then save) | The Explorer is reconciled with the file: removed folders leave their group, new folders are ungrouped | |
 | G11 | A saved edit to the file made outside the window (another editor) | Same reconciliation, no duplicate groups | |
-| G12 | Open a file from a collapsed group's host (Quick Open, recent files, editor history) | The host connects and the editor loads the file | |
+| G12 | Open a file from a collapsed group's host (Quick Open, recent files, editor history, a file link in a terminal or Markdown preview) | The host connects and the editor loads the file; no "unavailable" error | |
 | G13 | Run Search, then Reveal in Explorer on a result in a collapsed group; separately, activate a file there with `explorer.autoReveal` on | Reveal opens the group and selects the file; auto-reveal leaves the group collapsed | |
 | G14 | Collapse Folders in Explorer | Every group collapses, as do folders inside roots | |
 | G15 | With a group focused: Copy Path, Copy Relative Path, Delete, F2 (not Rename Group), Open to Side, title-bar New File/New Folder | Nothing happens; no `supercode-group:` path is copied; New File/Folder disabled | |
@@ -39,5 +39,8 @@ Needs a local window with a saved workspace. Check the `.code-workspace` content
 | G17 | Hosts n/m > Disconnect on a host whose group is expanded | It stays disconnected, even after collapse and expand, until you Reconnect | |
 | G18 | A group whose host failed | The group shows `!` with the per-host tooltip | |
 | G19 | Open a workspace without `"supercode.groups"` | Flat roots, same behaviour and expansion as before groups | |
+| G20 | In a folder window, then in an empty window: Add Workspace… > New Empty Group, and separately Import a workspace file with SSH folders | The window becomes an untitled workspace without reloading; the group shows at once (no reload needed); imported SSH hosts do not connect | |
+| G21 | Save the `.code-workspace` with a JSON syntax error (e.g. delete a closing bracket), then Rename Group or Add Workspace | Groups stay as they were; the command shows "could not be read" and the file is not rewritten; after fixing the file, groups reload | |
+| G22 | With a group focused, add a folder with an edit of the `.code-workspace` (outside the window) that lists it under another group | The folder stays in the group the file lists | |
 
 Known limits in v1: Quick Open / Find in Files don't search remote roots; remote terminals are not revived after a full window reload; no per-host settings.

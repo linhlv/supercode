@@ -19,6 +19,7 @@ import { AddRemoteFolderToWorkspaceAction } from './multiRemoteActions.js';
 import { IHostDemandService } from './hostDemand.js';
 import { MultiRemoteStatusContribution } from './multiRemoteStatus.js';
 import { MultiRemoteTerminalContribution } from './multiRemoteTerminal.js';
+import './workspaceGroupsActions.js';
 import { MultiRemoteWorkspaceContribution, ReconnectHostAction } from './multiRemoteWorkspace.js';
 
 /** Registers the host-routing `vscode-remote` file system provider in local windows. */

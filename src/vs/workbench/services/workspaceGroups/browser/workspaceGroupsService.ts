@@ -51,6 +51,11 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 	private readonly explicitAdds = new Set<string>();
 
 	private memberships: readonly IGroupMembership[] = [];
+	/**
+	 * Memberships of a mutation that is adding folders: reported as `groups` from before the
+	 * folders enter the workspace until they are written, so they never look ungrouped meanwhile.
+	 */
+	private pending: readonly IGroupMembership[] | undefined;
 	private collapsedState: { [name: string]: boolean } = {};
 	private cachedGroups: readonly IWorkspaceGroup[] = [];
 	private focusedGroup: string | undefined;
@@ -130,8 +135,8 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 
 			await this.refresh();
 			const unique = uniqueGroupName(trimmed, this.memberships.map(group => group.name));
-			await this.addToWorkspace(folders);
-			await this.writeMemberships(this.assign(this.memberships, unique, folders.map(folder => folder.uri), true));
+			const next = this.assign(this.memberships, unique, folders.map(folder => folder.uri), true);
+			await this.addAndWrite(folders, next);
 			return unique;
 		});
 	}
@@ -142,8 +147,7 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 			if (!target) {
 				throw new Error(`Unknown workspace group '${group}'`);
 			}
-			await this.addToWorkspace(folders);
-			await this.writeMemberships(this.assign(this.memberships, target.name, folders.map(folder => folder.uri)));
+			await this.addAndWrite(folders, this.assign(this.memberships, target.name, folders.map(folder => folder.uri)));
 		});
 	}
 
@@ -248,8 +252,7 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 			}
 
 			if (state === WorkbenchState.WORKSPACE) {
-				await this.addToWorkspace(toAdd);
-				await this.writeMemberships([...this.memberships, ...created]);
+				await this.addAndWrite(toAdd, [...this.memberships, ...created]);
 			} else {
 				await this.createWorkspaceAndEnter(created, toAdd);
 			}
@@ -306,6 +309,19 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 		const target = this.focusedGroup === undefined ? undefined : this.find(this.focusedGroup);
 		if (this.isActive && target && joining.length) {
 			await this.writeMemberships(this.assign(this.memberships, target.name, joining));
+		}
+	}
+
+	/** Adds `folders` to the workspace and writes `memberships`, which already count them as members while they appear. */
+	private async addAndWrite(folders: readonly IWorkspaceFolderCreationData[], memberships: readonly IGroupMembership[]): Promise<void> {
+		this.pending = memberships;
+		this.rebuild();
+		try {
+			await this.addToWorkspace(folders);
+			await this.writeMemberships(memberships);
+		} finally {
+			this.pending = undefined;
+			this.rebuild();
 		}
 	}
 
@@ -380,7 +396,7 @@ export class WorkspaceGroupsService extends Disposable implements IWorkspaceGrou
 	}
 
 	private rebuild(): void {
-		this.cachedGroups = this.memberships.map(group => ({
+		this.cachedGroups = (this.pending ?? this.memberships).map(group => ({
 			name: group.name,
 			folders: group.folders,
 			collapsed: this.collapsedState[nameKey(group.name)] ?? true

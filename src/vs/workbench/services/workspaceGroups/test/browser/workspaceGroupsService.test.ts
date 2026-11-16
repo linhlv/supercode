@@ -284,6 +284,35 @@ suite('WorkspaceGroupsService', () => {
 		assert.deepStrictEqual(summarize(service).map(g => g.folders), [[a.toString(), b.toString()], [c.toString()]]);
 	});
 
+	test('folders added into a group never appear ungrouped', async () => {
+		await seed([{ name: 'g', folders: [a] }], [a]);
+		const seen: string[] = [];
+		// registered before the service, so it runs before the service's own listener
+		store.add(foldersEmitter.event(e => e.added.forEach(f => seen.push(`early ${f.uri.path} ${service.getGroupOf(f.uri)?.name}`))));
+		const service = await created(create());
+		store.add(service.onDidChange(() => [b, c].forEach(f => { if (folders.some(x => x.uri.toString() === f.toString())) { seen.push(`change ${f.path} ${service.getGroupOf(f)?.name}`); } })));
+		store.add(foldersEmitter.event(e => e.added.forEach(f => seen.push(`late ${f.uri.path} ${service.getGroupOf(f.uri)?.name}`))));
+
+		await service.addFolders('g', [{ uri: b }]);
+		await service.createGroup('n', [{ uri: c }]);
+
+		assert.deepStrictEqual({ ungrouped: seen.filter(s => s.endsWith('undefined')), early: seen.filter(s => s.startsWith('early')) },
+			{ ungrouped: [], early: ['early /b g', 'early /c n'] });
+	});
+
+	test('imported folders never appear ungrouped', async () => {
+		await seed(undefined, [a]);
+		const service = await created(create());
+		const seen: string[] = [];
+		store.add(foldersEmitter.event(e => e.added.forEach(f => seen.push(`${f.uri.path} ${service.getGroupOf(f.uri)?.name}`))));
+		const file = URI.parse('file:///imports/shop.code-workspace');
+		await writeFile(file, { folders: [{ uri: b.toString() }, { uri: c.toString() }] });
+
+		await service.importWorkspaceFile(file);
+
+		assert.deepStrictEqual(seen, ['/b shop', '/c shop']);
+	});
+
 	test('removing a root from the workspace drops it from its group on the next write', async () => {
 		await seed([{ name: 'g', folders: [a, b] }]);
 		const service = await created(create());

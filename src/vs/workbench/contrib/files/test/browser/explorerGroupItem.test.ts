@@ -10,7 +10,7 @@ import { TestConfigurationService } from '../../../../../platform/configuration/
 import { NullFilesConfigurationService, TestFileService } from '../../../../test/common/workbenchTestServices.js';
 import { groupResource, IWorkspaceGroup } from '../../../../services/workspaceGroups/common/workspaceGroups.js';
 import { ExplorerItem } from '../../common/explorerModel.js';
-import { applyGroupCollapseState, compareExplorerGroupItems, ExplorerGroupItem, findExplorerGroupItem, getExpandableRoots, getExplorerRoots, groupExplorerRoots, isExplorerGroupItem } from '../../common/explorerGroupItem.js';
+import { applyGroupCollapseState, compareExplorerGroupItems, ExplorerGroupItem, findExplorerGroupItem, getExpandableRoots, getExplorerRoots, getRootsOutsideCollapsedGroups, groupExplorerRoots, isExplorerGroupItem, isGroupCollapsedByDefault } from '../../common/explorerGroupItem.js';
 
 suite('ExplorerGroupItem', () => {
 
@@ -129,6 +129,24 @@ suite('ExplorerGroupItem', () => {
 			applyGroupCollapseState(['file:///a::file:///a', groupResource('shut').toString()], groups),
 			['file:///a::file:///a', groupResource('open').toString()]);
 		assert.deepStrictEqual(applyGroupCollapseState(undefined, groups), [groupResource('open').toString()]);
+	});
+
+	test('roots of collapsed groups are left out of the find roots', () => {
+		const [a, b, c] = [root('/a'), root('/b'), root('/c')];
+		const collapsed = group('collapsed', [a]);
+		const expanded = group('expanded', [b]);
+		assert.deepStrictEqual([
+			getRootsOutsideCollapsedGroups([a, b, c], [collapsed, expanded, c], g => g === expanded),
+			getRootsOutsideCollapsedGroups([a, b, c], [a, b, c], () => false),
+			getRootsOutsideCollapsedGroups([a], a, () => false),
+		], [[b, c], [a, b, c], [a]]);
+	});
+
+	test('a group is collapsed by default as the groups service says, also while filtering', () => {
+		const groups: IWorkspaceGroup[] = [{ name: 'open', folders: [], collapsed: false }, { name: 'shut', folders: [], collapsed: true }];
+		assert.deepStrictEqual(
+			[isGroupCollapsedByDefault(group('open', []), groups), isGroupCollapsedByDefault(group('shut', []), groups), isGroupCollapsedByDefault(group('gone', []), groups), isGroupCollapsedByDefault(root('/a'), groups)],
+			[false, true, true, undefined]);
 	});
 
 	test('groups sort before roots and keep their order', () => {

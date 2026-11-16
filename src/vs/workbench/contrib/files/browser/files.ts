@@ -10,6 +10,7 @@ import { EditorResourceAccessor, SideBySideEditor, IEditorIdentifier } from '../
 import { List } from '../../../../base/browser/ui/list/listWidget.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { ExplorerItem } from '../common/explorerModel.js';
+import { isExplorerGroupItem } from '../common/explorerGroupItem.js';
 import { coalesce } from '../../../../base/common/arrays.js';
 import { AsyncDataTree } from '../../../../base/browser/ui/tree/asyncDataTree.js';
 import { IEditorGroupsService } from '../../../services/editor/common/editorGroupsService.js';
@@ -102,7 +103,8 @@ export function getResourceForCommand(commandArg: unknown, editorService: IEdito
 
 	const focus = getFocus(listService);
 	if (focus instanceof ExplorerItem) {
-		return focus.resource;
+		// A workspace group is no file: file commands get nothing for it
+		return isExplorerGroupItem(focus) ? undefined : focus.resource;
 	} else if (focus instanceof OpenEditor) {
 		return focus.getResource();
 	}

@@ -193,7 +193,8 @@ registerAction2(class RevealInSideBarForSearchResultsAction extends Action2 {
 			if (uri && contextService.isInsideWorkspace(uri)) {
 				const explorerView = explorerViewContainer.getExplorerView();
 				explorerView.setExpanded(true);
-				explorerService.select(uri, true).then(() => explorerView.focus(), onUnexpectedError);
+				// An explicit reveal: also opens a collapsed workspace group
+				explorerService.select(uri, 'force').then(() => explorerView.focus(), onUnexpectedError);
 			}
 		});
 	}

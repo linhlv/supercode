@@ -25,7 +25,7 @@ import { IKeyboardEvent } from '../../../../../base/browser/keyboardEvent.js';
 import { equals, deepClone } from '../../../../../base/common/objects.js';
 import { posix, relative, sep } from '../../../../../base/common/path.js';
 import { ExplorerItem, NewExplorerItem } from '../../common/explorerModel.js';
-import { compareExplorerGroupItems, getGroupDescription, isExplorerGroupItem } from '../../common/explorerGroupItem.js';
+import { compareExplorerGroupItems, getGroupDescription, getRootsOutsideCollapsedGroups, isExplorerGroupItem } from '../../common/explorerGroupItem.js';
 import { compareFileExtensionsDefault, compareFileNamesDefault, compareFileNamesUpper, compareFileExtensionsUpper, compareFileNamesLower, compareFileExtensionsLower, compareFileNamesUnicode, compareFileExtensionsUnicode } from '../../../../../base/common/comparers.js';
 import { CodeDataTransfers, containsDragType } from '../../../../../platform/dnd/browser/dnd.js';
 import { fillEditorsDragData } from '../../../../browser/dnd.js';
@@ -368,6 +368,12 @@ export class ExplorerFindProvider implements IAsyncFindProvider<ExplorerItem> {
 		return await this.doFilterFind(pattern, toggles.matchType, token);
 	}
 
+	/** The roots to search: roots in collapsed workspace groups are left out, searching them would reach their hosts. */
+	private getSearchableRoots(): ExplorerItem[] {
+		const tree = this.treeProvider();
+		return getRootsOutsideCollapsedGroups(this.explorerService.roots, tree.getInput(), group => tree.hasNode(group) && !tree.isCollapsed(group));
+	}
+
 	// Filter
 
 	private startFilterSession(): void {
@@ -377,7 +383,7 @@ export class ExplorerFindProvider implements IAsyncFindProvider<ExplorerItem> {
 			return;
 		}
 
-		const roots = this.explorerService.roots.filter(root => this.searchSupportsScheme(root.resource.scheme));
+		const roots = this.getSearchableRoots().filter(root => this.searchSupportsScheme(root.resource.scheme));
 		this.filterSessionStartState = { viewState: tree.getViewState(), input, rootsWithProviders: new Set(roots) };
 
 		this.explorerFindActiveContextKey.set(true);
@@ -499,7 +505,7 @@ export class ExplorerFindProvider implements IAsyncFindProvider<ExplorerItem> {
 	// Highlight
 
 	private startHighlightSession(): void {
-		const roots = this.explorerService.roots.filter(root => this.searchSupportsScheme(root.resource.scheme));
+		const roots = this.getSearchableRoots().filter(root => this.searchSupportsScheme(root.resource.scheme));
 		this.highlightSessionStartState = { rootsWithProviders: new Set(roots) };
 	}
 

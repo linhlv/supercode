@@ -42,6 +42,7 @@ import { IClipboardService } from '../../../../../platform/clipboard/common/clip
 import { IFileService, FileSystemProviderCapabilities } from '../../../../../platform/files/common/files.js';
 import { IDisposable, toDisposable } from '../../../../../base/common/lifecycle.js';
 import { Event } from '../../../../../base/common/event.js';
+import { onUnexpectedError } from '../../../../../base/common/errors.js';
 import { IViewDescriptorService } from '../../../../common/views.js';
 import { IViewsService } from '../../../../services/views/common/viewsService.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
@@ -58,7 +59,7 @@ import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
 import { IAccessibilityService } from '../../../../../platform/accessibility/common/accessibility.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { IWorkspaceGroupsService } from '../../../../services/workspaceGroups/common/workspaceGroups.js';
-import { applyGroupCollapseState, ExplorerGroupContextMenu, ExplorerGroupItem, findExplorerGroupItem, getExpandableRoots, getExplorerRoots, getGroupNameOfItem, getGroupsLayoutKey, groupExplorerRoots, isExplorerGroupItem } from '../../common/explorerGroupItem.js';
+import { applyGroupCollapseState, ExplorerGroupContextMenu, ExplorerGroupItem, findExplorerGroupItem, getExpandableRoots, getExplorerRoots, getGroupNameOfItem, getGroupsLayoutKey, groupExplorerRoots, isExplorerGroupItem, isGroupCollapsedByDefault } from '../../common/explorerGroupItem.js';
 
 
 function hasExpandedRootChild(tree: WorkbenchCompressibleAsyncDataTree<ExplorerItem | ExplorerItem[], ExplorerItem, FuzzyScore>, treeInput: ExplorerItem[]): boolean {
@@ -565,6 +566,10 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 			sorter: this.instantiationService.createInstance(FileSorter),
 			dnd: this.instantiationService.createInstance(FileDragAndDrop, (item) => this.isItemCollapsed(item)),
 			collapseByDefault: (e) => {
+				const groupCollapsed = isGroupCollapsedByDefault(e, this.groupsService.groups);
+				if (groupCollapsed !== undefined) {
+					return groupCollapsed;
+				}
 				if (e instanceof ExplorerItem) {
 					if (e.hasNests && getFileNestingSettings(e).expand) {
 						return false;
@@ -1050,9 +1055,9 @@ export class ExplorerView extends ViewPane implements IExplorerView {
 
 	private onDidChangeGroups(): void {
 		if (getGroupsLayoutKey(this.groupsService.groups) !== this.groupsLayoutKey) {
-			this.setTreeInput();
+			this.setTreeInput().catch(onUnexpectedError);
 		} else {
-			this.setTreeInputSequencer.queue(() => this.doSyncGroupCollapseState());
+			this.setTreeInputSequencer.queue(() => this.doSyncGroupCollapseState()).catch(onUnexpectedError);
 		}
 	}
 

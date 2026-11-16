@@ -22,21 +22,23 @@ import { IWorkspaceFolderLocationService } from '../../../../../platform/workspa
 import { URI } from '../../../../../base/common/uri.js';
 import { IWorkspace, IWorkspaceContextService, toWorkspaceFolder, WorkbenchState, Workspace } from '../../../../../platform/workspace/common/workspace.js';
 import { joinPath } from '../../../../../base/common/resources.js';
-import { mock } from '../../../../../base/test/common/mock.js';
+import { mock, upcastPartial } from '../../../../../base/test/common/mock.js';
 import { FuzzyScore } from '../../../../../base/common/filters.js';
 import { IClipboardService } from '../../../../../platform/clipboard/common/clipboardService.js';
 import { TestClipboardService } from '../../../../../platform/clipboard/test/common/testClipboardService.js';
 import { IContextMenuMenuDelegate, IContextMenuService } from '../../../../../platform/contextview/browser/contextView.js';
-import { WorkbenchCompressibleAsyncDataTree } from '../../../../../platform/list/browser/listService.js';
+import { IListService, WorkbenchCompressibleAsyncDataTree } from '../../../../../platform/list/browser/listService.js';
 import { IOpenerService } from '../../../../../platform/opener/common/opener.js';
 import { IViewDescriptorService, ViewContainerLocation } from '../../../../common/views.js';
 import { IEditorResolverService } from '../../../../services/editor/common/editorResolverService.js';
-import { IExplorerService } from '../../browser/files.js';
+import { getMultiSelectedResources, getResourceForCommand, IExplorerService } from '../../browser/files.js';
 import { ResourceLabels } from '../../../../browser/labels.js';
 import { hasKey } from '../../../../../base/common/types.js';
 import { testIWorkspace } from '../../../../../platform/workspace/test/common/testWorkspace.js';
 import { groupResource, IWorkspaceGroup, IWorkspaceGroupsService } from '../../../../services/workspaceGroups/common/workspaceGroups.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
+import { IEditorService } from '../../../../services/editor/common/editorService.js';
+import { IEditorGroup, IEditorGroupsService } from '../../../../services/editor/common/editorGroupsService.js';
 import { ExplorerGroupContextMenu, ExplorerGroupItem } from '../../common/explorerGroupItem.js';
 import { IContextKeyService } from '../../../../../platform/contextkey/common/contextkey.js';
 
@@ -748,6 +750,27 @@ suite('Files - ExplorerView', () => {
 			calls = [];
 			tree.setFocus([webFile]);
 			assert.deepStrictEqual(calls, [{ setFocusedGroup: 'shop' }]);
+		});
+
+		test('file commands never get the resource of a group', () => {
+			const listService = upcastPartial<IListService>({ lastFocusedList: tree });
+			const editorService = upcastPartial<IEditorService>({ activeEditor: undefined });
+			const editorGroupsService = upcastPartial<IEditorGroupsService>({ activeGroup: upcastPartial<IEditorGroup>({ selectedEditors: [] }) });
+			const explorerService = upcastPartial<IExplorerService>({ getContext: (respectMultiSelection: boolean) => view.getContext(respectMultiSelection) });
+			const resources = () => ({
+				single: getResourceForCommand(undefined, editorService, listService)?.toString(),
+				multi: getMultiSelectedResources(undefined, listService, editorService, editorGroupsService, explorerService).map(resource => resource.toString()),
+			});
+			tree.domFocus();
+			tree.setFocus([groupItem()]);
+			tree.setSelection([groupItem()]);
+			const onGroup = resources();
+			tree.setFocus([scratch]);
+			tree.setSelection([scratch]);
+			assert.deepStrictEqual({ onGroup, onRoot: resources() }, {
+				onGroup: { single: undefined, multi: [] },
+				onRoot: { single: scratch.resource.toString(), multi: [scratch.resource.toString()] },
+			});
 		});
 
 		test('the context menu of a group is the group menu', async () => {

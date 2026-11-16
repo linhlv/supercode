@@ -103,6 +103,15 @@ export function getExpandableRoots(input: ExplorerItem[], isExpanded: (group: Ex
 	return input.flatMap(item => isExplorerGroupItem(item) ? (isExpanded(item) ? item.roots : []) : [item]);
 }
 
+/** `roots` without the roots of groups that are not expanded, e.g. the roots the Explorer find may search. */
+export function getRootsOutsideCollapsedGroups(roots: readonly ExplorerItem[], input: ExplorerItem | ExplorerItem[] | undefined, isExpanded: (group: ExplorerGroupItem) => boolean): ExplorerItem[] {
+	if (!Array.isArray(input)) {
+		return [...roots];
+	}
+	const hidden = new Set(input.flatMap(item => isExplorerGroupItem(item) && !isExpanded(item) ? item.roots : []));
+	return roots.filter(root => !hidden.has(root));
+}
+
 /** The group item of the tree input that holds `root`, if any. */
 export function findExplorerGroupItem(input: ExplorerItem | ExplorerItem[] | undefined, root: ExplorerItem): ExplorerGroupItem | undefined {
 	if (!Array.isArray(input)) {
@@ -126,6 +135,14 @@ export function applyGroupCollapseState(expanded: readonly string[] | undefined,
 		...(expanded ?? []).filter(id => !groupIds.has(id)),
 		...groups.filter(group => !group.collapsed).map(group => groupResource(group.name).toString())
 	];
+}
+
+/** Whether a group starts collapsed in the tree (also while the Explorer find filters); `undefined` for other items. */
+export function isGroupCollapsedByDefault(item: unknown, groups: readonly IWorkspaceGroup[]): boolean | undefined {
+	if (!isExplorerGroupItem(item)) {
+		return undefined;
+	}
+	return groups.find(group => group.name === item.groupName)?.collapsed ?? true;
 }
 
 /** A key that changes when group names, order or membership change, but not on collapsed state. */

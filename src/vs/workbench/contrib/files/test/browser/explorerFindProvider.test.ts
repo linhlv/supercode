@@ -26,6 +26,8 @@ import { NullFilesConfigurationService, TestFileService } from '../../../../test
 import { IExplorerService } from '../../browser/files.js';
 import { ExplorerFindProvider, FilesFilter } from '../../browser/views/explorerViewer.js';
 import { ExplorerItem } from '../../common/explorerModel.js';
+import { ExplorerGroupItem, isExplorerGroupItem, isGroupCollapsedByDefault } from '../../common/explorerGroupItem.js';
+import { IWorkspaceGroup } from '../../../../services/workspaceGroups/common/workspaceGroups.js';
 
 function find(element: ExplorerItem, id: string): ExplorerItem | undefined {
 	if (element.name === id) {
@@ -253,6 +255,69 @@ suite('Find Provider - ExplorerView', () => {
 		assert.strictEqual(find(root, 'ab')?.isMarkedAsFiltered(), false);
 		assert.strictEqual(find(root, 'b')?.isMarkedAsFiltered(), false);
 		assert.strictEqual(find(root, 'bb')?.isMarkedAsFiltered(), false);
+
+		disposables.dispose();
+	});
+
+	test('find keeps workspace groups as the user leaves them and does not search the roots of collapsed groups', async function () {
+		const disposables = new DisposableStore();
+		const web = createStat.call(this, '/web', true);
+		const lab = createStat.call(this, '/lab', true);
+		lab.addChild(createStat.call(this, '/lab/notes.txt', false));
+		const groups: IWorkspaceGroup[] = [
+			{ name: 'shop', folders: [web.resource], collapsed: true },
+			{ name: 'open', folders: [lab.resource], collapsed: false },
+		];
+		const [shop, open] = groups.map((group, index) => new ExplorerGroupItem(group, [[web], [lab]][index], fileService, configService, NullFilesConfigurationService));
+		const searched: string[] = [];
+		instantiationService.stub(IExplorerService, { roots: [web, lab], refresh: () => Promise.resolve(), findClosest: () => null });
+		instantiationService.stub(ISearchService, {
+			fileSearch(query: IFileQuery): Promise<ISearchComplete> {
+				const folder = query.folderQueries[0].folder;
+				searched.push(folder.path);
+				return Promise.resolve({ results: folder.path === '/lab' && !query.filePattern?.endsWith('/**') ? [{ resource: URI.file('/lab/bb.txt') }] : [], messages: [] });
+			},
+			schemeHasFileSearchProvider: () => true,
+		});
+
+		const findProvider: ExplorerFindProvider = instantiationService.createInstance(ExplorerFindProvider, instantiationService.createInstance(TestFilesFilter) as unknown as FilesFilter, () => tree);
+		const dataSource: IAsyncDataSource<ExplorerItem | ExplorerItem[], ExplorerItem> = {
+			hasChildren: element => Array.isArray(element) || element.hasChildren(() => true),
+			getChildren: async element => Array.isArray(element) ? element : isExplorerGroupItem(element) ? element.roots : Array.from(element.children.values()),
+		};
+		const options: IWorkbenchCompressibleAsyncDataTreeOptions<ExplorerItem, FuzzyScore> = {
+			identityProvider: { getId: element => element.getId() },
+			keyboardNavigationLabelProvider: new KeyboardNavigationLabelProvider(),
+			accessibilityProvider: new AccessibilityProvider(),
+			// as the Explorer: groups follow the groups service, everything else opens while filtering
+			collapseByDefault: element => isGroupCollapsedByDefault(element, groups) ?? !findProvider.isShowingFilterResults(),
+		};
+		const tree = disposables.add(instantiationService.createInstance(WorkbenchCompressibleAsyncDataTree<ExplorerItem | ExplorerItem[], ExplorerItem, FuzzyScore>, 'test', document.createElement('div'), new VirtualDelegate(), { isIncompressible: () => true }, [new Renderer()], dataSource, options));
+		tree.layout(200);
+		await tree.setInput([shop, open]);
+		await tree.expand(open);
+		const groupEvents: string[] = [];
+		disposables.add(tree.onDidChangeCollapseState(e => {
+			const element = e.node.element?.element;
+			if (isExplorerGroupItem(element)) {
+				groupEvents.push(`${element.groupName}:${e.node.collapsed}`);
+			}
+		}));
+		const groupStates = () => [shop, open].map(group => `${group.groupName}:${tree.isCollapsed(group)}`);
+
+		findProvider.startSession();
+		await findProvider.find('bb', { matchType: TreeFindMatchType.Contiguous, findMode: TreeFindMode.Filter }, new CancellationTokenSource().token);
+		const whileFiltering = { states: groupStates(), found: !!lab.getChild('bb.txt')?.isMarkedAsFiltered() };
+		// the user closes a group while filtering: ending the filter must not open it again
+		tree.collapse(open);
+		await findProvider.endSession();
+
+		assert.deepStrictEqual({ whileFiltering, after: groupStates(), groupEvents, searched: [...new Set(searched)] }, {
+			whileFiltering: { states: ['shop:true', 'open:false'], found: true },
+			after: ['shop:true', 'open:true'],
+			groupEvents: ['open:true'],
+			searched: ['/lab'],
+		});
 
 		disposables.dispose();
 	});

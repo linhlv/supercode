@@ -27,6 +27,15 @@ suite('native ssh args', () => {
 		}, { batchMode: true, connectTimeout: true });
 	});
 
+	test('overrides a RemoteCommand from ssh config, which ssh refuses to combine with our own command', () => {
+		const args = buildNativeSshArgs(SSHDestination.parse('me@devbox'), []);
+
+		assert.deepStrictEqual(
+			pairs(args).some(p => p[0] === '-o' && p[1] === 'RemoteCommand=none'),
+			true
+		);
+	});
+
 	test('passes the destination and extra arguments through', () => {
 		const args = buildNativeSshArgs(new SSHDestination('devbox', 'me', 2222), ['-D', '1080']);
 
@@ -34,6 +43,7 @@ suite('native ssh args', () => {
 			'-v', '-T',
 			'-o', 'BatchMode=yes',
 			'-o', 'ConnectTimeout=15',
+			'-o', 'RemoteCommand=none',
 			'-D', '1080',
 			'-p', '2222',
 			'-l', 'me',

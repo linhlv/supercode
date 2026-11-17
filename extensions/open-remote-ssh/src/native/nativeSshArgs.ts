@@ -12,11 +12,14 @@ import SSHDestination from '../ssh/sshDestination';
  * The connection is established without any user interaction: `BatchMode=yes`
  * makes ssh fail instead of asking for a password, passphrase or host-key
  * confirmation, and `ConnectTimeout=15` bounds the time an unreachable host can
- * block the window. `extra` (e.g. `-D <port>`, `-F <file>`) goes before the destination.
+ * block the window. `RemoteCommand=none` cancels a `RemoteCommand` from the user's ssh
+ * config: ssh refuses to run one together with a command given on the command line
+ * ("Cannot execute command-line and remote command."), and the server package upload
+ * passes its own command. `extra` (e.g. `-D <port>`, `-F <file>`) goes before the destination.
  */
 export function buildNativeSshArgs(dest: SSHDestination, extra: string[]): string[] {
 	assertSafeHostname(dest.hostname);
-	const args: string[] = ['-v', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', ...extra];
+	const args: string[] = ['-v', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', '-o', 'RemoteCommand=none', ...extra];
 	if (dest.port) {
 		args.push('-p', String(dest.port));
 	}

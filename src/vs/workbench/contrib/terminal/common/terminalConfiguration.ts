@@ -512,13 +512,14 @@ export const terminalConfiguration: IStringDictionary<IConfigurationPropertySche
 	[TerminalSettingId.SplitCwd]: {
 		description: localize('terminal.integrated.splitCwd', "Controls the working directory a split terminal starts with."),
 		type: 'string',
-		enum: ['workspaceRoot', 'initial', 'inherited'],
+		enum: ['askInMultiRoot', 'workspaceRoot', 'initial', 'inherited'],
 		enumDescriptions: [
+			localize('terminal.integrated.splitCwd.askInMultiRoot', "In a multi-root workspace, splitting a terminal asks which root folder to start in, and the folder picked also decides the machine the terminal runs on. Otherwise, and for split terminals created by extensions or tasks, this behaves the same as inherited."),
 			localize('terminal.integrated.splitCwd.workspaceRoot', "A new split terminal will use the workspace root as the working directory. In a multi-root workspace a choice for which root folder to use is offered."),
 			localize('terminal.integrated.splitCwd.initial', "A new split terminal will use the working directory that the parent terminal started with."),
 			localize('terminal.integrated.splitCwd.inherited', "On macOS and Linux, a new split terminal will use the working directory of the parent terminal. On Windows, this behaves the same as initial."),
 		],
-		default: 'inherited'
+		default: 'askInMultiRoot'
 	},
 	[TerminalSettingId.WordSeparators]: {
 		markdownDescription: localize('terminal.integrated.wordSeparators', "A string containing all characters to be considered word separators when double-clicking to select word and in the fallback 'word' link detection. Since this is used for link detection, including characters such as `:` that are used when detecting links will cause the line and column part of links like `file:10:5` to be ignored."),

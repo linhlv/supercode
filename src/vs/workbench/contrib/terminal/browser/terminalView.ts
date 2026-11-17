@@ -13,7 +13,7 @@ import { IContextMenuService, IContextViewService } from '../../../../platform/c
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { IThemeService, Themable } from '../../../../platform/theme/common/themeService.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
-import { switchTerminalShowTabsTitle } from './terminalActions.js';
+import { pickCwdForSplit, switchTerminalShowTabsTitle } from './terminalActions.js';
 import { INotificationService, IPromptChoice, Severity } from '../../../../platform/notification/common/notification.js';
 import { ICreateTerminalOptions, ITerminalConfigurationService, ITerminalGroupService, ITerminalInstance, ITerminalService, TerminalConnectionState, TerminalDataTransfers } from './terminal.js';
 import { ViewPane, IViewPaneOptions } from '../../../browser/parts/views/viewPane.js';
@@ -262,7 +262,11 @@ export class TerminalViewPane extends ViewPane {
 					override async run() {
 						const instance = that._terminalGroupService.activeInstance;
 						if (instance) {
-							const newInstance = await that._terminalService.createTerminal({ location: { parentTerminal: instance } });
+							const picked = await that._instantiationService.invokeFunction(pickCwdForSplit);
+							if (!picked) {
+								return;
+							}
+							const newInstance = await that._terminalService.createTerminal({ location: { parentTerminal: instance }, cwd: picked.cwd });
 							return newInstance?.focusWhenReady();
 						}
 						return;

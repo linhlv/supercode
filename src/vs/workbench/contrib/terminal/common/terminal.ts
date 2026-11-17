@@ -182,7 +182,7 @@ export interface ITerminalConfiguration {
 	};
 	environmentChangesRelaunch: boolean;
 	showExitAlert: boolean;
-	splitCwd: 'workspaceRoot' | 'initial' | 'inherited';
+	splitCwd: 'askInMultiRoot' | 'workspaceRoot' | 'initial' | 'inherited';
 	windowsUseConptyDll?: boolean;
 	windowsReparentConsoleWindow?: boolean;
 	wordSeparators: string;

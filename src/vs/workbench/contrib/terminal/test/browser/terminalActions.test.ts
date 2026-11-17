@@ -16,7 +16,10 @@ import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { IQuickInputService, IQuickPickItem, QuickPickInput } from '../../../../../platform/quickinput/common/quickInput.js';
 import { IWorkspaceContextService, IWorkspaceFolder } from '../../../../../platform/workspace/common/workspace.js';
 import { IConfigurationResolverService } from '../../../../services/configurationResolver/common/configurationResolver.js';
-import { WorkspaceFolderCwdPair, pickCwdForNewTerminal, shrinkWorkspaceFolderCwdPairs } from '../../browser/terminalActions.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { WorkspaceFolderCwdPair, getCwdForSplit, pickCwdForNewTerminal, pickCwdForSplit, shrinkWorkspaceFolderCwdPairs } from '../../browser/terminalActions.js';
+import { ITerminalConfigurationService, ITerminalInstance } from '../../browser/terminal.js';
+import { ITerminalConfiguration } from '../../common/terminal.js';
 
 function makeFakeFolder(name: string, uri: URI): IWorkspaceFolder {
 	return {
@@ -45,35 +48,63 @@ suite('terminalActions', () => {
 	const c = makeFakeFolder('c', URI.joinPath(root, 'c'));
 	const d = makeFakeFolder('d', URI.joinPath(root, 'd'));
 
-	suite('pickCwdForNewTerminal', () => {
-		async function pick(folders: IWorkspaceFolder[]): Promise<{ result: { cwd: URI | undefined } | undefined; offered: string[] }> {
-			const offered: string[] = [];
-			const instantiationService = store.add(new TestInstantiationService());
-			instantiationService.stub(IWorkspaceContextService, new class extends mock<IWorkspaceContextService>() {
-				override getWorkspace() { return { id: 'w', folders, uri: undefined }; }
-			});
-			instantiationService.stub(IQuickInputService, new class extends mock<IQuickInputService>() {
-				override async pick<T extends IQuickPickItem>(picks: Promise<QuickPickInput<T>[]> | QuickPickInput<T>[]): Promise<T | undefined> {
-					const items = (Array.isArray(picks) ? picks : await picks).filter((item): item is T => item.type !== 'separator');
-					offered.push(...items.map(item => item.label));
-					return items[items.length - 1];
-				}
-			});
-			instantiationService.stub(ILabelService, { getUriLabel: (uri: URI) => uri.path });
-			instantiationService.stub(IConfigurationService, new TestConfigurationService());
-			instantiationService.stub(IConfigurationResolverService, {});
-			instantiationService.stub(IModelService, {});
-			instantiationService.stub(ILanguageService, {});
-			const result = await instantiationService.invokeFunction(accessor => pickCwdForNewTerminal(accessor));
-			return { result, offered };
-		}
+	async function pick(folders: IWorkspaceFolder[], run: typeof pickCwdForNewTerminal = pickCwdForNewTerminal, splitCwd: ITerminalConfiguration['splitCwd'] = 'askInMultiRoot'): Promise<{ result: { cwd: URI | undefined } | undefined; offered: string[] }> {
+		const offered: string[] = [];
+		const instantiationService = store.add(new TestInstantiationService());
+		instantiationService.stub(IWorkspaceContextService, new class extends mock<IWorkspaceContextService>() {
+			override getWorkspace() { return { id: 'w', folders, uri: undefined }; }
+		});
+		instantiationService.stub(IQuickInputService, new class extends mock<IQuickInputService>() {
+			override async pick<T extends IQuickPickItem>(picks: Promise<QuickPickInput<T>[]> | QuickPickInput<T>[]): Promise<T | undefined> {
+				const items = (Array.isArray(picks) ? picks : await picks).filter((item): item is T => item.type !== 'separator');
+				offered.push(...items.map(item => item.label));
+				return items[items.length - 1];
+			}
+		});
+		instantiationService.stub(ILabelService, { getUriLabel: (uri: URI) => uri.path });
+		instantiationService.stub(IConfigurationService, new TestConfigurationService());
+		instantiationService.stub(IConfigurationResolverService, {});
+		instantiationService.stub(IModelService, {});
+		instantiationService.stub(ILanguageService, {});
+		instantiationService.stub(ITerminalConfigurationService, new class extends mock<ITerminalConfigurationService>() {
+			override config = new class extends mock<ITerminalConfiguration>() { override splitCwd = splitCwd; };
+		});
+		const result = await instantiationService.invokeFunction(run);
+		return { result, offered };
+	}
 
+	suite('pickCwdForNewTerminal', () => {
 		test('asks which root to start in when the workspace has several', async () => {
 			deepStrictEqual(await pick([a, b]), { result: { cwd: b.uri }, offered: ['a', 'b'] });
 		});
 
 		test('leaves the cwd to the terminal service with a single root', async () => {
 			deepStrictEqual(await pick([a]), { result: { cwd: undefined }, offered: [] });
+		});
+	});
+
+	suite('pickCwdForSplit', () => {
+		test('asks which root to start in when the workspace has several', async () => {
+			deepStrictEqual(await pick([a, b], pickCwdForSplit), { result: { cwd: b.uri }, offered: ['a', 'b'] });
+		});
+
+		test('leaves the cwd to the terminal service with a single root', async () => {
+			deepStrictEqual(await pick([a], pickCwdForSplit), { result: { cwd: undefined }, offered: [] });
+		});
+
+		test('does not ask unless splitCwd is askInMultiRoot', async () => {
+			deepStrictEqual(await pick([a, b], pickCwdForSplit, 'workspaceRoot'), { result: { cwd: undefined }, offered: [] });
+		});
+	});
+
+	suite('getCwdForSplit', () => {
+		test('uses the cwd of the parent for askInMultiRoot without asking', async () => {
+			const instance = new class extends mock<ITerminalInstance>() { override async getSpeculativeCwd() { return '/parent-current'; } };
+			const commandService = new class extends mock<ICommandService>() { override executeCommand(): never { throw new Error('asked for a folder'); } };
+			const configService = new class extends mock<ITerminalConfigurationService>() {
+				override config = new class extends mock<ITerminalConfiguration>() { override splitCwd = 'askInMultiRoot' as const; };
+			};
+			deepStrictEqual(await getCwdForSplit(instance, [a, b], commandService, configService), '/parent-current');
 		});
 	});
 

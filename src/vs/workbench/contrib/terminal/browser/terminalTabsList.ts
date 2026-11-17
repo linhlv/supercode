@@ -45,6 +45,7 @@ import { Emitter } from '../../../../base/common/event.js';
 import { Schemas } from '../../../../base/common/network.js';
 import { getColorForSeverity } from './terminalStatusList.js';
 import { TerminalContextActionRunner } from './terminalContextMenu.js';
+import { pickCwdForSplit } from './terminalActions.js';
 import type { IHoverAction } from '../../../../base/browser/ui/hover/hover.js';
 import { HoverPosition } from '../../../../base/browser/ui/hover/hoverWidget.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
@@ -83,7 +84,7 @@ export class TerminalTabList extends WorkbenchList<ITerminalInstance> {
 		@ITerminalService private readonly _terminalService: ITerminalService,
 		@ITerminalGroupService private readonly _terminalGroupService: ITerminalGroupService,
 		@ITerminalEditingService private readonly _terminalEditingService: ITerminalEditingService,
-		@IInstantiationService instantiationService: IInstantiationService,
+		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@IDecorationsService decorationsService: IDecorationsService,
 		@IThemeService private readonly _themeService: IThemeService,
 		@IStorageService private readonly _storageService: IStorageService,
@@ -95,7 +96,7 @@ export class TerminalTabList extends WorkbenchList<ITerminalInstance> {
 				getHeight: () => TerminalTabsListSizes.TabHeight,
 				getTemplateId: () => 'terminal.tabs'
 			},
-			[instantiationService.createInstance(TerminalTabsRenderer, container, instantiationService.createInstance(ResourceLabels, DEFAULT_LABELS_CONTAINER), () => this.getSelectedElements(), {
+			[_instantiationService.createInstance(TerminalTabsRenderer, container, _instantiationService.createInstance(ResourceLabels, DEFAULT_LABELS_CONTAINER), () => this.getSelectedElements(), {
 				getHasText: () => this.hasText,
 				getHasActionBar: () => this.hasActionBar
 			})],
@@ -106,17 +107,17 @@ export class TerminalTabList extends WorkbenchList<ITerminalInstance> {
 				identityProvider: {
 					getId: e => e?.instanceId
 				},
-				accessibilityProvider: instantiationService.createInstance(TerminalTabsAccessibilityProvider),
+				accessibilityProvider: _instantiationService.createInstance(TerminalTabsAccessibilityProvider),
 				smoothScrolling: _configurationService.getValue<boolean>('workbench.list.smoothScrolling'),
 				multipleSelectionSupport: true,
 				paddingBottom: TerminalTabsListSizes.TabHeight,
-				dnd: instantiationService.createInstance(TerminalTabsDragAndDrop),
+				dnd: _instantiationService.createInstance(TerminalTabsDragAndDrop),
 				openOnSingleClick: true
 			},
 			contextKeyService,
 			listService,
 			_configurationService,
-			instantiationService,
+			_instantiationService,
 		);
 
 		const instanceDisposables: IDisposable[] = [
@@ -178,7 +179,10 @@ export class TerminalTabList extends WorkbenchList<ITerminalInstance> {
 			}
 
 			if (e.browserEvent.altKey && e.element) {
-				await this._terminalService.createTerminal({ location: { parentTerminal: e.element } });
+				const picked = await this._instantiationService.invokeFunction(pickCwdForSplit);
+				if (picked) {
+					await this._terminalService.createTerminal({ location: { parentTerminal: e.element }, cwd: picked.cwd });
+				}
 			} else if (this._getFocusMode() === 'singleClick') {
 				if (this.getSelection().length <= 1) {
 					e.element?.focus(true);
@@ -216,7 +220,7 @@ export class TerminalTabList extends WorkbenchList<ITerminalInstance> {
 			}
 		}));
 		if (!this._decorationsProvider) {
-			this._decorationsProvider = this.disposables.add(instantiationService.createInstance(TabDecorationsProvider));
+			this._decorationsProvider = this.disposables.add(_instantiationService.createInstance(TabDecorationsProvider));
 			this.disposables.add(decorationsService.registerDecorationsProvider(this._decorationsProvider));
 		}
 		this.refresh();
@@ -459,8 +463,13 @@ class TerminalTabsRenderer implements IListRenderer<ITerminalInstance, ITerminal
 		// If the instance is within the selection, split all selected
 		const actions = [
 			template.elementDisposables.add(new Action(TerminalCommandId.SplitActiveTab, terminalStrings.split.short, ThemeIcon.asClassName(Codicon.splitHorizontal), true, async () => {
+				// Asks once for all the selected tabs.
+				const picked = await this._instantiationService.invokeFunction(pickCwdForSplit);
+				if (!picked) {
+					return;
+				}
 				this._runForSelectionOrInstance(instance, async e => {
-					this._terminalService.createTerminal({ location: { parentTerminal: e } });
+					this._terminalService.createTerminal({ location: { parentTerminal: e }, cwd: picked.cwd });
 				});
 			})),
 		];

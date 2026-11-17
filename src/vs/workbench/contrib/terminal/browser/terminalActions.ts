@@ -29,7 +29,7 @@ import { ICommandService } from '../../../../platform/commands/common/commands.j
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { FileKind } from '../../../../platform/files/common/files.js';
-import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { ILabelService } from '../../../../platform/label/common/label.js';
 import { IListService } from '../../../../platform/list/browser/listService.js';
@@ -116,9 +116,23 @@ export async function getCwdForSplit(
 			return '';
 		case 'initial':
 			return instance.getInitialCwd();
+		// askInMultiRoot only asks in splits the user starts, see pickCwdForSplit.
+		case 'askInMultiRoot':
 		case 'inherited':
 			return instance.getSpeculativeCwd();
 	}
+}
+
+/**
+ * The cwd of a split the user started. With `terminal.integrated.splitCwd` set to `askInMultiRoot`
+ * and several workspace folders, asks for one like New Terminal does. Resolves `{ cwd: undefined }`
+ * to leave the cwd to the terminal service, and `undefined` when cancelled.
+ */
+export async function pickCwdForSplit(accessor: ServicesAccessor): Promise<{ cwd: URI | undefined } | undefined> {
+	if (accessor.get(ITerminalConfigurationService).config.splitCwd !== 'askInMultiRoot') {
+		return { cwd: undefined };
+	}
+	return pickCwdForNewTerminal(accessor);
 }
 
 export class TerminalLaunchHelpAction extends Action {
@@ -1084,12 +1098,17 @@ export function registerTerminalActions() {
 			const optionsOrProfile = isObject(args) ? args as ICreateTerminalOptions | ITerminalProfile : undefined;
 			const commandService = accessor.get(ICommandService);
 			const workspaceContextService = accessor.get(IWorkspaceContextService);
+			const instantiationService = accessor.get(IInstantiationService);
 			const options = convertOptionsOrProfileToOptions(optionsOrProfile);
 			const activeInstance = (await c.service.getInstanceHost(options?.location)).activeInstance;
 			if (!activeInstance) {
 				return;
 			}
-			const cwd = await getCwdForSplit(activeInstance, workspaceContextService.getWorkspace().folders, commandService, c.configService);
+			const picked = await instantiationService.invokeFunction(pickCwdForSplit);
+			if (!picked) {
+				return;
+			}
+			const cwd = picked.cwd ?? await getCwdForSplit(activeInstance, workspaceContextService.getWorkspace().folders, commandService, c.configService);
 			if (cwd === undefined) {
 				return;
 			}
@@ -1114,10 +1133,15 @@ export function registerTerminalActions() {
 		run: async (c, accessor) => {
 			const instances = getSelectedViewInstances(accessor);
 			if (instances) {
+				// Asks once for all the selected tabs.
+				const picked = await pickCwdForSplit(accessor);
+				if (!picked) {
+					return;
+				}
 				const promises: Promise<void>[] = [];
 				for (const t of instances) {
 					promises.push((async () => {
-						await c.service.createTerminal({ location: { parentTerminal: t } });
+						await c.service.createTerminal({ location: { parentTerminal: t }, cwd: picked.cwd });
 						await c.groupService.showPanel(true);
 					})());
 				}
@@ -1623,7 +1647,10 @@ export function refreshTerminalActions(detectedProfiles: ITerminalProfile[]): ID
 			if (event && (event.altKey || event.ctrlKey)) {
 				const parentTerminal = c.service.activeInstance;
 				if (parentTerminal) {
-					await c.service.createTerminal({ location: { parentTerminal }, config: options?.config });
+					const picked = await pickCwdForSplit(accessor);
+					if (picked) {
+						await c.service.createTerminal({ location: { parentTerminal }, config: options?.config, cwd: picked.cwd });
+					}
 					return;
 				}
 			}

@@ -422,6 +422,16 @@ export class ExplorerService implements IExplorerService {
 		}
 	}
 
+	async refreshFolder(folder: ExplorerItem): Promise<void> {
+		// Do not refresh the tree when it is showing temporary nodes (phantom elements)
+		if (!this.view || this.view.hasPhantomElements()) {
+			return;
+		}
+
+		folder.forgetChildren();
+		await this.view.refresh(true, folder);
+	}
+
 	// File events
 
 	private async finishMoveBatch(correlationId: number): Promise<void> {

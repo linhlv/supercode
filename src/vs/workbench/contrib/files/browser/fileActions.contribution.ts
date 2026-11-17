@@ -517,6 +517,32 @@ MenuRegistry.appendMenuItem(MenuId.ExplorerContext, {
 	when: ExplorerFolderContext
 });
 
+const REFRESH_FOLDER_COMMAND_ID = 'supercode.explorer.refreshFolder';
+CommandsRegistry.registerCommand(REFRESH_FOLDER_COMMAND_ID, async (accessor: ServicesAccessor) => {
+	const explorerService = accessor.get(IExplorerService);
+	const folders = new Set(explorerService.getContext(true).filter(stat => stat.isDirectory));
+	// A folder inside another selected folder is refreshed with it
+	const outermost = [...folders].filter(folder => {
+		for (let parent = folder.parent; parent; parent = parent.parent) {
+			if (folders.has(parent)) {
+				return false;
+			}
+		}
+		return true;
+	});
+	await Promise.all(outermost.map(folder => explorerService.refreshFolder(folder)));
+});
+
+MenuRegistry.appendMenuItem(MenuId.ExplorerContext, {
+	group: 'navigation',
+	order: 8,
+	command: {
+		id: REFRESH_FOLDER_COMMAND_ID,
+		title: nls.localize('refreshFolder', "Refresh")
+	},
+	when: ExplorerFolderContext
+});
+
 MenuRegistry.appendMenuItem(MenuId.ExplorerContext, {
 	group: 'navigation',
 	order: 10,

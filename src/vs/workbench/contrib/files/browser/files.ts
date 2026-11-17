@@ -35,6 +35,8 @@ export interface IExplorerService {
 	findClosest(resource: URI): ExplorerItem | null;
 	findClosestRoot(resource: URI): ExplorerItem | null;
 	refresh(): Promise<void>;
+	/** Reads `folder` and its expanded descendants again from their file system. */
+	refreshFolder(folder: ExplorerItem): Promise<void>;
 	setToCopy(stats: ExplorerItem[], cut: boolean): Promise<void>;
 	isCut(stat: ExplorerItem): boolean;
 	applyBulkEdit(edit: ResourceFileEdit[], options: { undoLabel: string; progressLabel: string; confirmBeforeUndo?: boolean; progressLocation?: ProgressLocation.Explorer | ProgressLocation.Window }): Promise<void>;

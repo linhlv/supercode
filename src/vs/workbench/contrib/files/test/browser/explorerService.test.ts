@@ -43,6 +43,7 @@ suite('Files - ExplorerService', () => {
 	let calls: string[];
 	let visibilityChecks: string[];
 	let focusDuringRender: boolean;
+	let configurationService: TestConfigurationService;
 
 	const editableData: IEditableData = {
 		validationMessage: () => null,
@@ -55,7 +56,7 @@ suite('Files - ExplorerService', () => {
 		focusDuringRender = false;
 		focusChanged = store.add(new Emitter<boolean>());
 		fileService = store.add(new TestFileService());
-		const configurationService = new TestConfigurationService({ explorer: { autoReveal: false } });
+		configurationService = new TestConfigurationService({ explorer: { autoReveal: false } });
 		const instantiationService = workbenchInstantiationService({
 			fileService: () => fileService,
 			configurationService: () => configurationService,
@@ -684,6 +685,30 @@ suite('Files - ExplorerService', () => {
 		await explorerService.refresh(false);
 
 		assert.deepStrictEqual(calls, ['start editing', 'refresh']);
+	});
+
+	test('refreshFolder re-reads only that folder, with its expanded descendants', async () => {
+		const refreshed: { name: string | undefined; recursive: boolean }[] = [];
+		explorerService.registerView(new class extends mock<IExplorerView>() {
+			override async refresh(recursive: boolean, stat?: ExplorerItem): Promise<void> {
+				refreshed.push({ name: stat?.name, recursive });
+			}
+			override hasPhantomElements(): boolean {
+				return false;
+			}
+		});
+		const root = explorerService.roots[0];
+		const folder = new ExplorerItem(joinPath(root.resource, 'folder'), fileService, configurationService, NullFilesConfigurationService, root, true);
+		folder._isDirectoryResolved = true;
+		root.addChild(folder);
+		folder.addChild(new ExplorerItem(joinPath(folder.resource, 'stale.txt'), fileService, configurationService, NullFilesConfigurationService, folder, false));
+
+		await explorerService.refreshFolder(folder);
+
+		assert.deepStrictEqual(
+			{ refreshed, children: folder.children.size, resolved: folder.isDirectoryResolved, rootChildren: root.children.has('folder') },
+			{ refreshed: [{ name: 'folder', recursive: true }], children: 0, resolved: false, rootChildren: true }
+		);
 	});
 
 	test('defers file changes that were already queued when editing started', () => runWithFakedTimers({ useFakeTimers: true }, async () => {

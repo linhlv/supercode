@@ -1,76 +1,151 @@
-# Visual Studio Code - Open Source ("Code - OSS")
-[![Feature Requests](https://img.shields.io/github/issues/microsoft/vscode/feature-request.svg)](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc)
-[![Bugs](https://img.shields.io/github/issues/microsoft/vscode/bug.svg)](https://github.com/microsoft/vscode/issues?utf8=✓&q=is%3Aissue+is%3Aopen+label%3Abug)
+# Supercode
 
-## The Repository
+Supercode is a fork of [Visual Studio Code](https://github.com/microsoft/vscode). In it, **one window can hold local folders and folders on several SSH machines at the same time**. You can browse, open, edit and save files, and run terminals, on every machine side by side, without opening one window per machine.
 
-This repository ("`Code - OSS`") is where we (Microsoft) develop the [Visual Studio Code](https://code.visualstudio.com) product together with the community. Not only do we work on code and issues here, but we also publish our [roadmap](https://github.com/microsoft/vscode/wiki/Roadmap), [monthly iteration plans](https://github.com/microsoft/vscode/wiki/Iteration-Plans), and our [endgame plans](https://github.com/microsoft/vscode/wiki/Running-the-Endgame). This source code is available to everyone under the standard [MIT license](https://github.com/microsoft/vscode/blob/main/LICENSE.txt).
+```
+Explorer
+├─ notes              (local)
+├─ app  [SSH: alice@devbox]
+├─ app  [SSH: deploy@prod-1:2222]
+└─ etl  [SSH: pi@raspberrypi]
+```
 
-## Visual Studio Code
+## What it does
 
-<p align="center">
-  <img alt="VS Code in action" src="https://github.com/user-attachments/assets/56af271c-949d-454c-a3ea-16188c063414">
-</p>
+- **Mixed workspaces:** one local window holds a multi-root workspace (`.code-workspace`) that mixes local folders with folders on any number of SSH hosts.
+- **Explorer and editing on every host:** create, rename, delete, move and save files on any host. The view updates live when files change on the remote machine.
+- **Terminals on every host:** a terminal opened in a remote folder runs on that machine, and its tab shows the host. A short network drop doesn't kill it.
+- **Background connections:** when you open a workspace, every host connects in the background. The window is usable immediately, and a slow or dead host never blocks the others.
+- **Workspace groups:**
+  - Roots can be organised into named, collapsible groups in the Explorer. Groups live in the `.code-workspace` file under `"supercode.groups"`, and the file stays a valid VS Code workspace file.
+  - A new or imported group starts collapsed. A collapsed group's SSH hosts stay disconnected: they don't connect at startup, and they disconnect after an idle delay (default 5 minutes) once nothing but collapsed groups uses them.
+  - Expanding a group connects its hosts. Opening a file, or a terminal, on a collapsed group's host also connects it.
+  - A host you disconnect yourself from the Hosts picker stays disconnected until you reconnect it.
+  - Groups only exist in a local window with a saved or untitled workspace. Without `"supercode.groups"` the Explorer behaves exactly as before.
+- **Host status:**
+  - Explorer roots show `…` while connecting and `!` on failure, with the error in the tooltip.
+  - Right-click a root and choose **Reconnect Host** to retry.
+  - The status bar item **Hosts n/m** opens a picker with Reconnect, Disconnect and New Terminal for each host.
+- **Safety:**
+  - SSH never prompts (BatchMode); a host that needs a password fails with a message instead.
+  - Hosts in an untrusted workspace don't auto-connect.
+  - Host names are validated before they reach `ssh`.
+- **Normal Remote-SSH windows** (a whole window on one remote) behave exactly like stock VS Code.
 
-[Visual Studio Code](https://code.visualstudio.com) is a distribution of the `Code - OSS` repository with Microsoft-specific customizations released under a traditional [Microsoft product license](https://code.visualstudio.com/License/).
+**Not in v1:**
+- Quick Open and Find in Files over remote folders.
+- Extensions running on remote hosts (IntelliSense, git, debugging there).
+- Bringing remote terminals back after a full window reload.
+- Per-host settings.
+- Windows as a remote host.
 
-[Visual Studio Code](https://code.visualstudio.com) combines the simplicity of a code editor with what developers need for their core edit-build-debug cycle. It provides comprehensive code editing, navigation, and understanding support along with lightweight debugging, a rich extensibility model, and lightweight integration with existing tools.
+## Requirements
 
-Visual Studio Code is updated monthly with new features and bug fixes. You can download it for Windows, macOS, and Linux on the [Visual Studio Code website](https://code.visualstudio.com/Download). To get the latest releases every day, install the [Insiders build](https://code.visualstudio.com/insiders).
+- **Your machine:** macOS on Apple silicon.
+- **Remote hosts:** Linux x64, Linux ARM64, or Alpine (x64/ARM64). 32-bit ARM isn't supported.
+- **SSH access:**
+  - Log in with SSH keys or ssh-agent. Password and 2FA logins are not supported, by design.
+  - Each host must already be in `~/.ssh/known_hosts`. Connect once with `ssh <host>` in a terminal first.
+  - `~/.ssh/config` hosts, aliases and `ProxyJump` work as they do in your terminal, because Supercode uses the system `ssh`.
 
-## Contributing
+## Using it
 
-There are many ways in which you can participate in this project, for example:
+1. Open Supercode as a normal local window.
+2. Run **Add SSH Folder to Workspace…**, either from the Command Palette or from the button in the Explorer title bar.
+3. Pick a host from `~/.ssh/config`, or type `user@host[:port]`.
+4. Pick a folder on that host. It's added as a workspace root named `<folder> [SSH: user@host]`.
+5. Repeat for more hosts, and add local folders with **File → Add Folder to Workspace…**.
+6. Save the workspace (**File → Save Workspace As…**). Reopening it reconnects every host in the background.
+7. To open a terminal on a host, use **New Terminal** in one of its folders, or **New Terminal on Remote Host…**.
 
-* [Submit bugs and feature requests](https://github.com/microsoft/vscode/issues), and help us verify them as they are checked in
-* Review [source code changes](https://github.com/microsoft/vscode/pulls)
-* Review the [documentation](https://github.com/microsoft/vscode-docs) and make pull requests for anything from typos to new content.
+### Workspace groups
 
-If you are interested in fixing issues and contributing directly to the codebase, please see the document [How to Contribute](https://github.com/microsoft/vscode/wiki/How-to-Contribute), which covers the following:
+- **Add Workspace…** (File menu, or the Explorer title bar) imports a `.code-workspace` file as a group, named after the file. **New Empty Group** creates an empty one.
+- Right-click a group for Add Folder, Add SSH Folder, New Terminal in Group, Rename, Ungroup and Remove. Right-click a root and choose **Move to Group…**, or drag roots between groups.
+- Click a group to expand it, which connects its hosts. Collapse it to let them disconnect after `multiRemote.idleDisconnectDelay` seconds (default `300`, minimum `0`).
+- Search's **Reveal in Explorer** opens a collapsed group. Auto-reveal of the active editor does not.
+- Editing the `.code-workspace` file by hand or with stock VS Code is fine: the groups are reconciled with the folders it lists.
 
-* [How to build and run from source](https://github.com/microsoft/vscode/wiki/How-to-Contribute)
-* [The development workflow, including debugging and running tests](https://github.com/microsoft/vscode/wiki/How-to-Contribute#debugging)
-* [Coding guidelines](https://github.com/microsoft/vscode/wiki/Coding-Guidelines)
-* [Submitting pull requests](https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests)
-* [Finding an issue to work on](https://github.com/microsoft/vscode/wiki/How-to-Contribute#where-to-contribute)
-* [Contributing to translations](https://aka.ms/vscodeloc)
+The first time you connect to a host, Supercode uploads its server package to `~/.supercode-server/` on that host. The package comes from your Mac, so the host doesn't need internet access.
 
-## Feedback
+## Repository layout
 
-* Ask a question on [Stack Overflow](https://stackoverflow.com/questions/tagged/vscode)
-* [Request a new feature](CONTRIBUTING.md)
-* Upvote [popular feature requests](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc)
-* [File an issue](https://github.com/microsoft/vscode/issues)
-* Connect with the extension author community on [GitHub Discussions](https://github.com/microsoft/vscode-discussions/discussions) or [Slack](https://aka.ms/vscode-dev-community)
-* Follow [@code](https://x.com/code) and let us know what you think!
+```
+supercode/
+├─ README.md
+├─ docs/superpowers/
+│  ├─ specs/2026-11-13-multi-remote-window-design.md   design (why, goals, approach)
+│  └─ plans/2026-11-13-multi-remote-window.md          implementation plan (tasks)
+├─ vscode/                       the fork (git, branch `multi-host`, based on microsoft/vscode daa23473)
+│  ├─ docs/supercode/manual-test.md                    checklist for real-host testing
+│  ├─ scripts/supercode/build.sh                       packages the app + Linux/Alpine servers
+│  └─ scripts/test-multi-remote-integration.sh         two-host integration tests
+└─ VSCode-darwin-arm64/Supercode.app                   packaged app (build output)
+```
 
-See our [wiki](https://github.com/microsoft/vscode/wiki/Feedback-Channels) for a description of each of these channels and information on some other available community-driven channels.
+### How it works
 
-## Related Projects
+Supercode reuses VS Code's own remote server. The window stays local and opens one lightweight connection per SSH host. These connections carry files and terminals only; no remote extension host runs.
 
-Many of the core components and extensions to VS Code live in their own repositories on GitHub. For example, the [node debug adapter](https://github.com/microsoft/vscode-node-debug) and the [mono debug adapter](https://github.com/microsoft/vscode-mono-debug) repositories are separate from each other. For a complete list, please visit the [Related Projects](https://github.com/microsoft/vscode/wiki/Related-Projects) page on our [wiki](https://github.com/microsoft/vscode/wiki).
+| Piece | Where |
+|---|---|
+| Per-host connections and their states (connecting, connected, reconnecting, failed, disconnected) | `src/vs/workbench/services/remote/{common,browser}/multiRemoteService.ts` |
+| `vscode-remote` file system router, which sends each call to the right host | `src/vs/workbench/services/remote/browser/remoteFileSystemRouter.ts` |
+| Resolving extra hosts through resolver extensions | `IExtensionService.resolveRemoteAuthority` (`abstractExtensionService.ts`) |
+| Terminal backend per host | `src/vs/workbench/contrib/multiRemote/browser/multiRemoteTerminal.ts`, plus `terminal/browser/*` |
+| Background connect, refresh on connect, root decorations, trust gating | `src/vs/workbench/contrib/multiRemote/browser/multiRemoteWorkspace.ts` |
+| Add-folder command, Hosts status bar | `src/vs/workbench/contrib/multiRemote/browser/multiRemoteActions.ts`, `multiRemoteStatus.ts` |
+| Workspace groups: model, storage in the workspace file (`"supercode.groups"`), collapsed state, import and reconcile | `src/vs/workbench/services/workspaceGroups/*` |
+| Which hosts are wanted (ungrouped or expanded roots, visible editors and terminals), idle disconnect, `multiRemote.idleDisconnectDelay` | `src/vs/workbench/contrib/multiRemote/browser/hostDemand.ts` |
+| Group commands (add, import, move, ungroup, rename, remove) and the group context menu | `src/vs/workbench/contrib/multiRemote/browser/workspaceGroupsActions.ts` |
+| Group rows in the Explorer tree (group items, drop targets) | `src/vs/workbench/contrib/files/common/explorerGroupItem.ts`, with hooks in `contrib/files/browser/views/explorerViewer.ts` |
+| SSH resolver: open-remote-ssh v0.6.1 (MIT), vendored, with a session per host and non-interactive native OpenSSH | `extensions/open-remote-ssh/` (changes listed in `VENDORED.md`) |
 
-## Bundled Extensions
+Each host is identified by its `vscode-remote` authority (`ssh-remote+…`), compared case-insensitively. Single-remote windows and the web build don't use any of this.
 
-VS Code includes a set of built-in extensions located in the [extensions](extensions) folder, including grammars and snippets for many languages. Extensions that provide rich language support (inline suggestions, Go to Definition) for a language have the suffix `language-features`. For example, the `json` extension provides coloring for `JSON` and the `json-language-features` extension provides rich language support for `JSON`.
+## Building
 
-## Development Container
+All commands run in `vscode/` with Node `24.22.1` (see `.nvmrc`) and pnpm.
 
-This repository includes a Visual Studio Code Dev Containers / GitHub Codespaces development container.
+```bash
+export PATH="$HOME/.nvm/versions/node/v24.22.1/bin:$PATH"
+corepack enable
+pnpm install
+pnpm run compile            # or: pnpm run build-fast --client-only
+./scripts/code.sh           # run from source (dev)
+```
 
-* For [Dev Containers](https://aka.ms/vscode-remote/download/containers), use the **Dev Containers: Clone Repository in Container Volume...** command, which creates a Docker volume for better disk I/O on macOS and Windows.
-  * If you already have VS Code and Docker installed, you can also click [here](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/microsoft/vscode) to get started. This will cause VS Code to automatically install the Dev Containers extension if needed, clone the source code into a container volume, and spin up a dev container for use.
+To build the app and the server packages:
 
-* For Codespaces, install the [GitHub Codespaces](https://marketplace.visualstudio.com/items?itemName=GitHub.codespaces) extension in VS Code, and use the **Codespaces: Create New Codespace** command.
+```bash
+scripts/supercode/build.sh --dry-run   # print what it will do
+scripts/supercode/build.sh             # needs Docker running and ~30 GB free disk
+```
 
-Docker / the Codespace should have at least **4 cores and 6 GB of RAM (8 GB recommended)** to run a full build. See the [development container README](.devcontainer/README.md) for more information.
+- The app is written to `../VSCode-darwin-arm64/Supercode.app`.
+- The server packages are written to `~/.supercode/server-packages/<commit>/vscode-reh-<target>.tar.gz`.
+- Each server is built inside a Linux container of its own architecture, so its native modules (node-pty, file watcher) are real Linux binaries. The script checks this after each build.
+- Hosts must run the server built from the exact same commit as the app.
 
-## Code of Conduct
+## Testing
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information, see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+```bash
+./scripts/test.sh --grep "WorkspaceGroups|HostDemand|MultiRemote|RemoteFileSystemRouter|Explorer|Terminal|SimpleFileDialog|ExtensionService"
+./scripts/test-multi-remote-integration.sh     # two stand-in hosts (test resolver), no SSH needed
+./scripts/test-remote-integration.sh           # single-remote suites still green
+pnpm -C extensions/open-remote-ssh exec mocha out/test/*.test.js   # after compiling the extension
+```
+
+To test against real machines, follow `vscode/docs/supercode/manual-test.md`.
+
+## Status
+
+- **Implemented and reviewed:** the design's 10 tasks, plus a whole-branch review and its fix round. Unit, integration and single-remote suites pass.
+- **Packaging:** the macOS app builds. The Linux/Alpine server build script is being fixed for two issues: the end-of-life Debian 11 mirror, and Alpine builds needing their Node binary without Docker. Server packages haven't been produced yet.
+- **Not yet done:** the hands-on test on real SSH hosts (`manual-test.md`).
 
 ## License
 
-Copyright (c) Microsoft Corporation. All rights reserved.
-
-Licensed under the [MIT](LICENSE.txt) license.
+- The VS Code source is MIT, © Microsoft (see `vscode/LICENSE.txt`).
+- open-remote-ssh is MIT, © jeanp413 (see `vscode/extensions/open-remote-ssh/LICENSE.txt`).
+- "Visual Studio Code" is a Microsoft trademark. Supercode is an independent fork, built from the open-source code without Microsoft branding or the proprietary Remote-SSH extension.
